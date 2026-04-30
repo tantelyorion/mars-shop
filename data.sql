@@ -1,7 +1,9 @@
 -- ============================================
 -- MARS SHOP - BASE DE DONNÉES COMPLÈTE
+-- VERSION PROPR ET OPTIMISÉE
 -- ============================================
 
+-- Supprimer et recréer la base de données
 DROP DATABASE IF EXISTS mars_shop;
 CREATE DATABASE mars_shop CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE mars_shop;
@@ -20,10 +22,14 @@ CREATE TABLE users (
     avatar VARCHAR(255) DEFAULT NULL,
     role ENUM('user', 'admin') DEFAULT 'user',
     is_active BOOLEAN DEFAULT TRUE,
+    amea_id VARCHAR(255) UNIQUE DEFAULT NULL,
+    amea_avatar VARCHAR(500) DEFAULT NULL,
+    auth_provider VARCHAR(50) DEFAULT 'local',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_email (email),
-    INDEX idx_role (role)
+    INDEX idx_role (role),
+    INDEX idx_amea_id (amea_id)
 );
 
 -- ============================================
@@ -210,12 +216,6 @@ CREATE TABLE categories (
     INDEX idx_slug (slug)
 );
 
--- Ajouter les colonnes pour l'authentification AMEA
-ALTER TABLE users ADD COLUMN amea_id VARCHAR(255) NULL UNIQUE;
-ALTER TABLE users ADD COLUMN amea_avatar VARCHAR(500) NULL;
-ALTER TABLE users ADD COLUMN auth_provider VARCHAR(50) DEFAULT 'local';
-ALTER TABLE users ADD INDEX idx_amea_id (amea_id);
-
 -- ============================================
 -- INSERTION DES DONNÉES DE BASE
 -- ============================================
@@ -253,21 +253,105 @@ INSERT INTO users (username, email, password, full_name, address, phone) VALUES
 
 -- Coupons
 INSERT INTO coupons (code, description, discount_type, discount_value, min_order_amount, valid_from, valid_to, usage_limit) VALUES
-('BIENVENUE10', '10% de réduction sur votre première commande', 'percentage', 10, 50, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 365 DAY), 100),
-('MARS20', '20€ de réduction', 'fixed', 20, 100, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 90 DAY), 50),
-('MARS25', '25% sur la collection Mars', 'percentage', 25, 80, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 60 DAY), 30);
+('BIENVENUE10', '10% de réduction sur votre première commande', 'percentage', 10.00, 50.00, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 365 DAY), 100),
+('MARS20', '20€ de réduction sur votre commande', 'fixed', 20.00, 100.00, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 90 DAY), 50),
+('MARS25', '25% sur la collection Mars', 'percentage', 25.00, 80.00, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 60 DAY), 30);
 
--- Commandes de test
+-- ============================================
+-- COMMANDES DE TEST (CORRIGÉES)
+-- ============================================
+
+-- Génération des numéros de commande avec DATE_FORMAT
+SET @order_num1 = CONCAT('MARS-', DATE_FORMAT(NOW(), '%Y%m%d'), '-001');
+SET @order_num2 = CONCAT('MARS-', DATE_FORMAT(NOW(), '%Y%m%d'), '-002');
+SET @txn1 = CONCAT('TXN-MARS-', REPLACE(UUID(), '-', ''));
+SET @txn2 = CONCAT('TXN-MARS-', REPLACE(UUID(), '-', ''));
+
+-- Insertion des commandes
 INSERT INTO orders (user_id, order_number, subtotal, discount, shipping_cost, tax, total_amount, status, payment_status, shipping_address) VALUES
-(2, 'MARS-' . DATE_FORMAT(NOW(), '%Y%m%d') . '-001', 119.97, 0, 0, 23.99, 143.96, 'delivered', 'paid', '123 Rue de l\'Espace, Paris'),
-(2, 'MARS-' . DATE_FORMAT(NOW(), '%Y%m%d') . '-002', 149.98, 0, 0, 30.00, 179.98, 'processing', 'paid', '123 Rue de l\'Espace, Paris');
+(2, @order_num1, 119.97, 0, 0, 23.99, 143.96, 'delivered', 'paid', '123 Rue de l\'Espace, Paris'),
+(2, @order_num2, 149.98, 0, 0, 30.00, 179.98, 'processing', 'paid', '123 Rue de l\'Espace, Paris');
 
+-- Insertion des articles
 INSERT INTO order_items (order_id, product_id, product_name, quantity, price, total) VALUES
 (1, 1, 'T-Shirt Mars Rock', 2, 29.99, 59.98),
 (1, 3, 'Casquette Explorer', 2, 29.99, 59.99),
 (2, 6, 'Maquette Rover', 1, 49.99, 49.99),
 (2, 10, 'Kit Fusée Martienne', 2, 49.99, 99.99);
 
+-- Insertion des paiements
 INSERT INTO payments (order_id, payment_method, card_last4, transaction_id, amount, status) VALUES
-(1, 'credit_card', '4242', 'TXN-MARS-' . UNHEX(REPLACE(UUID(), '-', '')), 143.96, 'success'),
-(2, 'paypal', NULL, 'TXN-MARS-' . UNHEX(REPLACE(UUID(), '-', '')), 179.98, 'success');
+(1, 'cash', NULL, @txn1, 143.96, 'success'),
+(2, 'papay', NULL, @txn2, 179.98, 'success');
+
+-- ============================================
+-- FIN DU SCRIPT
+-- ============================================
+
+
+-- ============================================
+-- MARS SHOP - AJOUT DES TABLES POUR PAIEMENTS
+-- ============================================
+
+-- Table des méthodes de paiement (configurable par admin)
+CREATE TABLE payment_methods (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(50) NOT NULL UNIQUE,
+    display_name VARCHAR(100) NOT NULL,
+    description TEXT,
+    logo VARCHAR(255),
+    is_active BOOLEAN DEFAULT TRUE,
+    sort_order INT DEFAULT 0,
+    settings JSON,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_active (is_active)
+);
+
+-- Table des comptes Mobile Money (configurable par admin)
+CREATE TABLE mobile_money_accounts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    operator ENUM('airtel', 'mvola', 'orange') NOT NULL UNIQUE,
+    operator_name VARCHAR(50) NOT NULL,
+    phone_number VARCHAR(20) NOT NULL,
+    account_name VARCHAR(100),
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Table des transactions Mobile Money (attente validation)
+CREATE TABLE mobile_money_transactions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    order_id INT NOT NULL,
+    user_id INT NOT NULL,
+    operator ENUM('airtel', 'mvola', 'orange') NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    transaction_id VARCHAR(100) NOT NULL,
+    sender_phone VARCHAR(20),
+    status ENUM('pending', 'verified', 'rejected') DEFAULT 'pending',
+    admin_notes TEXT,
+    verified_by INT,
+    verified_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (verified_by) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_status (status),
+    INDEX idx_transaction_id (transaction_id),
+    UNIQUE KEY unique_transaction (transaction_id, operator)
+);
+
+-- Ajouter les méthodes de paiement par défaut
+INSERT INTO payment_methods (name, display_name, description, logo, sort_order, settings) VALUES
+('credit_card', 'Carte bancaire', 'Paiement sécurisé par carte bancaire (Visa, Mastercard)', 'cc-visa', 1, '{"api_key": "", "enabled": true}'),
+('paypal', 'PayPal', 'Paiement via votre compte PayPal', 'paypal', 2, '{"client_id": "", "enabled": true}'),
+('mobile_money', 'Mobile Money', 'Paiement par Mobile Money (Airtel Money, Mvola, Orange Money)', 'mobile-alt', 3, '{"enabled": true}'),
+('cash', 'Paiement à la livraison', 'Payez en espèces à la réception de votre commande', 'money-bill-wave', 4, '{"enabled": true}');
+
+-- Ajouter les comptes Mobile Money par défaut
+INSERT INTO mobile_money_accounts (operator, operator_name, phone_number, account_name, is_active) VALUES
+('airtel', 'Airtel Money', '+225 07 00 00 00 01', 'Mars Shop Airtel', TRUE),
+('mvola', 'Mvola', '+261 34 00 000 01', 'Mars Shop Mvola', TRUE),
+('orange', 'Orange Money', '+225 07 00 00 00 02', 'Mars Shop Orange', TRUE);

@@ -1,30 +1,35 @@
 <?php
+// admin/order-detail.php - Détail d'une commande pour admin
 require_once '../config/database.php';
 require_once '../includes/functions.php';
+
 requireAdmin();
 
 $order_id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 
+if ($order_id <= 0) {
+    header('Location: orders.php');
+    exit();
+}
+
 $conn = getConnection();
 
-// Get order details
+// Récupérer la commande
 $stmt = $conn->prepare("
-    SELECT o.*, u.username, u.email, u.full_name, u.phone, u.address,
-           p.status as payment_status, p.transaction_id, p.payment_method
+    SELECT o.*, u.username, u.email, u.phone 
     FROM orders o 
     JOIN users u ON o.user_id = u.id 
-    LEFT JOIN payments p ON o.id = p.order_id 
     WHERE o.id = ?
 ");
 $stmt->execute([$order_id]);
 $order = $stmt->fetch();
 
-if(!$order) {
+if (!$order) {
     header('Location: orders.php');
     exit();
 }
 
-// Get order items
+// Récupérer les articles
 $stmt = $conn->prepare("
     SELECT oi.*, p.name 
     FROM order_items oi 
@@ -32,102 +37,242 @@ $stmt = $conn->prepare("
     WHERE oi.order_id = ?
 ");
 $stmt->execute([$order_id]);
-$order_items = $stmt->fetchAll();
+$items = $stmt->fetchAll();
+
+// Récupérer le paiement
+$stmt = $conn->prepare("SELECT * FROM payments WHERE order_id = ?");
+$stmt->execute([$order_id]);
+$payment = $stmt->fetch();
+
+$statuses = [
+    'pending' => 'En attente',
+    'processing' => 'En traitement',
+    'shipped' => 'Expédiée',
+    'delivered' => 'Livrée',
+    'cancelled' => 'Annulée'
+];
 ?>
 
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Order Details - Mars Shop Admin</title>
+    <title>Détail commande #<?php echo $order['order_number']; ?> - Administration</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="../assets/css/style.css">
     <style>
-        .admin-container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
-        .back-link { display: inline-block; margin-bottom: 1rem; color: var(--mars-light); }
-        .info-card { background: rgba(255,255,255,0.1); padding: 1.5rem; border-radius: 15px; margin-bottom: 1.5rem; }
-        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.1); }
-        .status-badge { padding: 5px 10px; border-radius: 5px; display: inline-block; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #0f0f14;
+            color: #ffffff;
+        }
+        
+        .admin-wrapper {
+            display: flex;
+            min-height: 100vh;
+        }
+        
+        .admin-main {
+            flex: 1;
+            margin-left: 280px;
+            padding: 24px;
+        }
+        
+        .back-link {
+            display: inline-block;
+            margin-bottom: 20px;
+            color: #c14432;
+            text-decoration: none;
+        }
+        
+        .card {
+            background: #1a1a24;
+            border: 1px solid #2a2a35;
+            border-radius: 16px;
+            overflow: hidden;
+            margin-bottom: 24px;
+        }
+        
+        .card-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #2a2a35;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+        
+        .card-body {
+            padding: 24px;
+        }
+        
+        .order-info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+        
+        .info-group {
+            background: #2a2a35;
+            border-radius: 12px;
+            padding: 16px;
+        }
+        
+        .info-group h4 {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            color: #a0a0b0;
+            margin-bottom: 8px;
+        }
+        
+        .info-group p {
+            font-size: 1rem;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #2a2a35;
+        }
+        
+        th {
+            color: #a0a0b0;
+            font-weight: 500;
+        }
+        
+        .total-row {
+            font-weight: bold;
+            background: rgba(193, 68, 50, 0.1);
+        }
+        
+        .status-select {
+            padding: 8px 16px;
+            background: #2a2a35;
+            border: 1px solid #3a3a45;
+            border-radius: 8px;
+            color: white;
+        }
+        
+        .btn-update {
+            background: #c14432;
+            color: white;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        
+        @media (max-width: 768px) {
+            .admin-main {
+                margin-left: 0;
+            }
+            .order-info-grid {
+                grid-template-columns: 1fr;
+            }
+            table {
+                font-size: 0.75rem;
+            }
+        }
     </style>
 </head>
 <body>
-    <header>
-        <div class="header-container">
-            <div class="logo"><a href="../index.php"><i class="fas fa-planet-ringed"></i><span>Mars Shop Admin</span></a></div>
-            <nav><ul><li><a href="../logout.php"><i class="fas fa-sign-out-alt"></i> Logout</a></li></ul></nav>
-        </div>
-    </header>
+<div class="admin-wrapper">
+    <?php include 'includes/sidebar.php'; ?>
     
-    <div class="admin-container">
-        <a href="orders.php" class="back-link"><i class="fas fa-arrow-left"></i> Back to Orders</a>
+    <main class="admin-main">
+        <a href="orders.php" class="back-link"><i class="fas fa-arrow-left"></i> Retour aux commandes</a>
         
-        <h1><i class="fas fa-receipt"></i> Order Details</h1>
-        
-        <div class="grid-2">
-            <div class="info-card">
-                <h3>Order Information</h3>
-                <p><strong>Order Number:</strong> <?php echo $order['order_number']; ?></p>
-                <p><strong>Order Date:</strong> <?php echo date('F d, Y H:i', strtotime($order['created_at'])); ?></p>
-                <p><strong>Order Status:</strong> 
-                    <span class="status-badge" style="background: 
-                        <?php echo $order['status'] == 'completed' ? '#4caf50' : 
-                            ($order['status'] == 'processing' ? '#2196f3' : 
-                            ($order['status'] == 'cancelled' ? '#f44336' : '#ff9800')); ?>">
-                        <?php echo ucfirst($order['status']); ?>
-                    </span>
-                </p>
-                <p><strong>Payment Status:</strong> 
-                    <span class="status-badge" style="background: <?php echo $order['payment_status'] == 'success' ? '#4caf50' : '#ff9800'; ?>">
-                        <?php echo ucfirst($order['payment_status']); ?>
-                    </span>
-                </p>
-                <?php if($order['transaction_id']): ?>
-                    <p><strong>Transaction ID:</strong> <?php echo $order['transaction_id']; ?></p>
-                <?php endif; ?>
+        <div class="card">
+            <div class="card-header">
+                <h2>Commande #<?php echo $order['order_number']; ?></h2>
+                <form method="POST" action="update-order-status.php" style="display: flex; gap: 12px; align-items: center;">
+                    <input type="hidden" name="order_id" value="<?php echo $order['id']; ?>">
+                    <select name="status" class="status-select">
+                        <?php foreach($statuses as $key => $label): ?>
+                        <option value="<?php echo $key; ?>" <?php echo $order['status'] == $key ? 'selected' : ''; ?>><?php echo $label; ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <button type="submit" class="btn-update">Mettre à jour</button>
+                </form>
             </div>
-            
-            <div class="info-card">
-                <h3>Customer Information</h3>
-                <p><strong>Name:</strong> <?php echo htmlspecialchars($order['full_name']); ?></p>
-                <p><strong>Username:</strong> <?php echo $order['username']; ?></p>
-                <p><strong>Email:</strong> <?php echo $order['email']; ?></p>
-                <p><strong>Phone:</strong> <?php echo $order['phone'] ?: 'N/A'; ?></p>
-                <p><strong>Address:</strong> <?php echo nl2br(htmlspecialchars($order['address'] ?: $order['shipping_address'])); ?></p>
-            </div>
-        </div>
-        
-        <div class="info-card">
-            <h3>Order Items</h3>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Product</th>
-                        <th>Price</th>
-                        <th>Quantity</th>
-                        <th>Total</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach($order_items as $item): ?>
+            <div class="card-body">
+                <div class="order-info-grid">
+                    <div class="info-group">
+                        <h4>Client</h4>
+                        <p><strong><?php echo clean($order['username']); ?></strong></p>
+                        <p><?php echo clean($order['email']); ?></p>
+                        <p><?php echo clean($order['phone']); ?></p>
+                    </div>
+                    <div class="info-group">
+                        <h4>Date de commande</h4>
+                        <p><?php echo date('d/m/Y H:i', strtotime($order['created_at'])); ?></p>
+                    </div>
+                    <div class="info-group">
+                        <h4>Adresse de livraison</h4>
+                        <p><?php echo nl2br(clean($order['shipping_address'])); ?></p>
+                    </div>
+                    <div class="info-group">
+                        <h4>Paiement</h4>
+                        <p>Mode : <?php echo str_replace('_', ' ', $order['payment_method']); ?></p>
+                        <p>Statut : <span class="status-badge <?php echo $order['payment_status']; ?>"><?php echo $order['payment_status'] == 'paid' ? 'Payé' : 'En attente'; ?></span></p>
+                        <?php if($payment && $payment['transaction_id']): ?>
+                        <p>Transaction : <?php echo $payment['transaction_id']; ?></p>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                
+                <h3 style="margin-bottom: 16px;">Articles commandés</h3>
+                <table>
+                    <thead>
+                        <tr><th>Produit</th><th>Prix unitaire</th><th>Quantité</th><th>Total</th></tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach($items as $item): ?>
                         <tr>
-                            <td><?php echo htmlspecialchars($item['name']); ?></td>
-                            <td>$<?php echo number_format($item['price'], 2); ?></td>
-                            <td><?php echo $item['quantity']; ?></td>
-                            <td>$<?php echo number_format($item['price'] * $item['quantity'], 2); ?></td>
+                            <td><?php echo clean($item['name']); ?></td>
+                            <td><?php echo formatPrice($item['price']); ?></td>
+                            <td>x<?php echo $item['quantity']; ?></td>
+                            <td><?php echo formatPrice($item['price'] * $item['quantity']); ?></td>
                         </tr>
-                    <?php endforeach; ?>
-                </tbody>
-                <tfoot>
-                    <tr>
-                        <td colspan="3" style="text-align: right;"><strong>Total:</strong></td>
-                        <td><strong>$<?php echo number_format($order['total_amount'], 2); ?></strong></td>
-                    </tr>
-                </tfoot>
-            </table>
+                        <?php endforeach; ?>
+                        <tr class="total-row">
+                            <td colspan="3" style="text-align: right;"><strong>Total</strong></td>
+                            <td><strong><?php echo formatPrice($order['total_amount']); ?></strong></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
-    </div>
+    </main>
+</div>
+
+<script>
+const toggle = document.getElementById('mobileToggle');
+const sidebar = document.getElementById('adminSidebar');
+if (toggle && sidebar) {
+    toggle.addEventListener('click', () => sidebar.classList.toggle('active'));
+}
+</script>
 </body>
 </html>

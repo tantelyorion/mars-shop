@@ -45,9 +45,9 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // URL de redirection vers AMEA OAuth
-$amea_auth_url = 'https://amea.chaudly.com/oauth_authorize.php?' . http_build_query([
+$amea_auth_url = 'https://chaudly.com/oauth_authorize.php?' . http_build_query([
     'client_id' => 'VOTRE_CLIENT_ID_AMEA',
-    'redirect_uri' => 'https://mars-shop.com/oauth_amea_callback.php',
+    'redirect_uri' => 'https://localhost/mars-shop/oauth_amea_callback.php',
     'response_type' => 'code',
     'scope' => 'profile email',
     'state' => bin2hex(random_bytes(16))

@@ -1,57 +1,116 @@
 <?php
-// config/database.php - Version améliorée avec gestion d'erreurs
-class Database {
-    private static $instance = null;
-    private $conn;
-    
-    private $host = 'localhost';
-    private $dbname = 'mars_shop';
-    private $username = 'root';
-    private $password = '';
+// config/database.php - Version clean et optimisée
+
+// Configuration de la base de données
+define('DB_HOST', 'localhost');
+define('DB_NAME', 'mars_shop');
+define('DB_USER', 'root');
+define('DB_PASS', '');
+define('DB_CHARSET', 'utf8mb4');
+
+// Configuration AMEA OAuth
+define('AMEA_CLIENT_ID', 'VOTRE_CLIENT_ID_AMEA');
+define('AMEA_CLIENT_SECRET', 'VOTRE_CLIENT_SECRET_AMEA');
+define('AMEA_REDIRECT_URI', 'https://votre-site.com/oauth_amea_callback.php');
+
+// Options PDO
+$pdo_options = [
+    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    PDO::ATTR_EMULATE_PREPARES => false
+];
+
+/**
+ * Classe Database - Singleton pour la connexion PDO
+ */
+final class Database {
+    private static ?Database $instance = null;
+    private ?PDO $connection = null;
     
     private function __construct() {
+        $this->connect();
+    }
+    
+    private function __clone() {}
+    
+    public function __wakeup() {}
+    
+    /**
+     * Établit la connexion à la base de données
+     */
+    private function connect(): void {
         try {
-            $this->conn = new PDO(
-                "mysql:host={$this->host};dbname={$this->dbname};charset=utf8mb4",
-                $this->username,
-                $this->password,
-                [
-                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                    PDO::ATTR_EMULATE_PREPARES => false
-                ]
+            $dsn = sprintf(
+                'mysql:host=%s;dbname=%s;charset=%s',
+                DB_HOST,
+                DB_NAME,
+                DB_CHARSET
             );
-        } catch(PDOException $e) {
-            die("Erreur de connexion : " . $e->getMessage());
+            
+            $this->connection = new PDO($dsn, DB_USER, DB_PASS, $GLOBALS['pdo_options']);
+        } catch (PDOException $e) {
+            $this->handleConnectionError($e);
         }
     }
     
-    public static function getInstance() {
+    /**
+     * Gère les erreurs de connexion
+     */
+    private function handleConnectionError(PDOException $e): void {
+        $error = "Erreur de connexion à la base de données";
+        
+        if (defined('DEBUG_MODE') && DEBUG_MODE) {
+            $error .= ": " . $e->getMessage();
+        }
+        
+        die($error);
+    }
+    
+    /**
+     * Récupère l'instance unique (Singleton)
+     */
+    public static function getInstance(): Database {
         if (self::$instance === null) {
             self::$instance = new self();
         }
         return self::$instance;
     }
     
-    public function getConnection() {
-        return $this->conn;
+    /**
+     * Récupère la connexion PDO
+     */
+    public function getConnection(): PDO {
+        if ($this->connection === null) {
+            $this->connect();
+        }
+        return $this->connection;
+    }
+    
+    /**
+     * Teste la connexion
+     */
+    public function isConnected(): bool {
+        return $this->connection !== null;
+    }
+    
+    /**
+     * Ferme la connexion
+     */
+    public function close(): void {
+        $this->connection = null;
     }
 }
 
-// Fonction globale pour la compatibilité
-function getConnection() {
+/**
+ * Fonction globale pour récupérer la connexion (compatibilité)
+ */
+function getConnection(): PDO {
     return Database::getInstance()->getConnection();
 }
 
-// Démarrer la session si ce n'est pas déjà fait
+/**
+ * Démarrage de la session
+ */
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
-
-// Ajouter dans config/database.php à la fin
-// Configuration AMEA OAuth
-define('AMEA_CLIENT_ID', 'VOTRE_CLIENT_ID_AMEA');
-define('AMEA_CLIENT_SECRET', 'VOTRE_CLIENT_SECRET_AMEA');
-define('AMEA_REDIRECT_URI', 'https://mars-shop.com/oauth_amea_callback.php');
-
-?>

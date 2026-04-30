@@ -1,24 +1,28 @@
 <?php
-// includes/functions.php - Version corrigée sans doublons
+// includes/functions.php - Version clean et optimisée
+
+// ============================================
+// AUTHENTIFICATION
+// ============================================
 
 /**
  * Vérifie si l'utilisateur est admin
  */
-function isAdmin() {
+function isAdmin(): bool {
     return isset($_SESSION['role']) && $_SESSION['role'] === 'admin';
 }
 
 /**
  * Vérifie si l'utilisateur est connecté
  */
-function isLoggedIn() {
+function isLoggedIn(): bool {
     return isset($_SESSION['user_id']);
 }
 
 /**
  * Redirige si non connecté
  */
-function requireLogin() {
+function requireLogin(): void {
     if (!isLoggedIn()) {
         $_SESSION['redirect_after_login'] = $_SERVER['REQUEST_URI'];
         header('Location: login.php');
@@ -29,7 +33,7 @@ function requireLogin() {
 /**
  * Redirige si non admin
  */
-function requireAdmin() {
+function requireAdmin(): void {
     requireLogin();
     if (!isAdmin()) {
         header('Location: index.php');
@@ -38,28 +42,85 @@ function requireAdmin() {
 }
 
 /**
+ * Génère l'URL de connexion AMEA
+ */
+function getAmeaLoginUrl(): string {
+    $params = [
+        'client_id' => AMEA_CLIENT_ID,
+        'redirect_uri' => AMEA_REDIRECT_URI,
+        'response_type' => 'code',
+        'scope' => 'profile email',
+        'state' => bin2hex(random_bytes(16))
+    ];
+    return 'https://chaudly.com/oauth_authorize.php?' . http_build_query($params);
+}
+
+
+// ============================================
+// FORMATAGE
+// ============================================
+
+/**
  * Formate le prix
  */
-function formatPrice($price) {
+function formatPrice(float $price): string {
     return number_format($price, 2, ',', ' ') . ' €';
 }
 
 /**
  * Formate la date
  */
-function formatDate($date, $format = 'd/m/Y H:i') {
+function formatDate(string $date, string $format = 'd/m/Y H:i'): string {
     return date($format, strtotime($date));
 }
 
 /**
+ * Nettoie une chaîne (XSS protection)
+ */
+function clean(?string $string): string {
+    return htmlspecialchars($string ?? '', ENT_QUOTES, 'UTF-8');
+}
+
+/**
+ * Tronque un texte
+ */
+function truncate(string $text, int $length = 100, string $suffix = '...'): string {
+    if (strlen($text) <= $length) {
+        return $text;
+    }
+    return substr($text, 0, $length) . $suffix;
+}
+
+/**
+ * Génère un slug SEO-friendly
+ */
+function createSlug(string $string): string {
+    $string = strtolower(trim($string));
+    $string = preg_replace('/[^a-z0-9-]/', '-', $string);
+    $string = preg_replace('/-+/', '-', $string);
+    return trim($string, '-');
+}
+
+/**
+ * Génère un numéro de commande unique
+ */
+function generateOrderNumber(): string {
+    return 'MARS-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -6));
+}
+
+
+// ============================================
+// GESTION DU PANIER
+// ============================================
+
+/**
  * Ajoute un produit au panier
  */
-function addToCart($product_id, $quantity = 1) {
+function addToCart(int $product_id, int $quantity = 1): void {
     if (isLoggedIn()) {
         global $conn;
         $user_id = $_SESSION['user_id'];
         
-        // Vérifier si le produit existe déjà dans le panier
         $stmt = $conn->prepare("SELECT id, quantity FROM cart WHERE user_id = ? AND product_id = ?");
         $stmt->execute([$user_id, $product_id]);
         $existing = $stmt->fetch();
@@ -73,14 +134,14 @@ function addToCart($product_id, $quantity = 1) {
             $stmt->execute([$user_id, $product_id, $quantity]);
         }
     } else {
-        // Panier en session
+        // Panier en session pour les non connectés
         if (!isset($_SESSION['guest_cart'])) {
             $_SESSION['guest_cart'] = [];
         }
         
         $found = false;
         foreach ($_SESSION['guest_cart'] as &$item) {
-            if ($item['product_id'] == $product_id) {
+            if ($item['product_id'] === $product_id) {
                 $item['quantity'] += $quantity;
                 $found = true;
                 break;
@@ -99,7 +160,7 @@ function addToCart($product_id, $quantity = 1) {
 /**
  * Récupère le nombre d'articles dans le panier
  */
-function getCartCount() {
+function getCartCount(): int {
     $count = 0;
     
     if (isLoggedIn()) {
@@ -122,7 +183,7 @@ function getCartCount() {
 /**
  * Supprime un produit du panier
  */
-function removeFromCart($cart_id, $is_guest = false) {
+function removeFromCart(int $cart_id, bool $is_guest = false): void {
     if (isLoggedIn() && !$is_guest) {
         global $conn;
         $stmt = $conn->prepare("DELETE FROM cart WHERE id = ? AND user_id = ?");
@@ -130,7 +191,7 @@ function removeFromCart($cart_id, $is_guest = false) {
     } else {
         if (isset($_SESSION['guest_cart'])) {
             foreach ($_SESSION['guest_cart'] as $key => $item) {
-                if ($item['product_id'] == $cart_id) {
+                if ($item['product_id'] === $cart_id) {
                     unset($_SESSION['guest_cart'][$key]);
                     $_SESSION['guest_cart'] = array_values($_SESSION['guest_cart']);
                     break;
@@ -143,7 +204,7 @@ function removeFromCart($cart_id, $is_guest = false) {
 /**
  * Met à jour la quantité d'un produit dans le panier
  */
-function updateCartQuantity($cart_id, $quantity, $is_guest = false) {
+function updateCartQuantity(int $cart_id, int $quantity, bool $is_guest = false): void {
     if ($quantity <= 0) {
         removeFromCart($cart_id, $is_guest);
         return;
@@ -156,7 +217,7 @@ function updateCartQuantity($cart_id, $quantity, $is_guest = false) {
     } else {
         if (isset($_SESSION['guest_cart'])) {
             foreach ($_SESSION['guest_cart'] as &$item) {
-                if ($item['product_id'] == $cart_id) {
+                if ($item['product_id'] === $cart_id) {
                     $item['quantity'] = $quantity;
                     break;
                 }
@@ -168,7 +229,7 @@ function updateCartQuantity($cart_id, $quantity, $is_guest = false) {
 /**
  * Synchronise le panier guest vers la BDD après connexion
  */
-function syncCartAfterLogin($user_id) {
+function syncCartAfterLogin(int $user_id): void {
     if (!isset($_SESSION['guest_cart']) || empty($_SESSION['guest_cart'])) {
         return;
     }
@@ -196,7 +257,7 @@ function syncCartAfterLogin($user_id) {
 /**
  * Récupère les articles du panier
  */
-function getCartItems() {
+function getCartItems(): array {
     $items = [];
     
     if (isLoggedIn()) {
@@ -220,7 +281,7 @@ function getCartItems() {
             
             foreach ($products as $product) {
                 foreach ($_SESSION['guest_cart'] as $item) {
-                    if ($item['product_id'] == $product['id']) {
+                    if ($item['product_id'] === $product['id']) {
                         $product['cart_id'] = 'guest_' . $product['id'];
                         $product['quantity'] = $item['quantity'];
                         $items[] = $product;
@@ -237,7 +298,7 @@ function getCartItems() {
 /**
  * Vider le panier
  */
-function clearCart() {
+function clearCart(): void {
     if (isLoggedIn()) {
         global $conn;
         $stmt = $conn->prepare("DELETE FROM cart WHERE user_id = ?");
@@ -247,10 +308,15 @@ function clearCart() {
     }
 }
 
+
+// ============================================
+// GESTION DE LA WISHLIST
+// ============================================
+
 /**
  * Ajoute à la wishlist
  */
-function addToWishlist($product_id) {
+function addToWishlist(int $product_id): void {
     if (isLoggedIn()) {
         global $conn;
         $stmt = $conn->prepare("INSERT IGNORE INTO wishlist (user_id, product_id) VALUES (?, ?)");
@@ -268,7 +334,7 @@ function addToWishlist($product_id) {
 /**
  * Supprime de la wishlist
  */
-function removeFromWishlist($product_id) {
+function removeFromWishlist(int $product_id): void {
     if (isLoggedIn()) {
         global $conn;
         $stmt = $conn->prepare("DELETE FROM wishlist WHERE user_id = ? AND product_id = ?");
@@ -287,7 +353,7 @@ function removeFromWishlist($product_id) {
 /**
  * Récupère le nombre d'articles dans la wishlist
  */
-function getWishlistCount() {
+function getWishlistCount(): int {
     if (isLoggedIn()) {
         global $conn;
         $stmt = $conn->prepare("SELECT COUNT(*) as count FROM wishlist WHERE user_id = ?");
@@ -301,7 +367,7 @@ function getWishlistCount() {
 /**
  * Vérifie si produit dans wishlist
  */
-function isInWishlist($product_id) {
+function isInWishlist(int $product_id): bool {
     if (isLoggedIn()) {
         global $conn;
         $stmt = $conn->prepare("SELECT id FROM wishlist WHERE user_id = ? AND product_id = ?");
@@ -311,31 +377,22 @@ function isInWishlist($product_id) {
     return isset($_SESSION['guest_wishlist']) && in_array($product_id, $_SESSION['guest_wishlist']);
 }
 
-/**
- * Nettoie une chaîne
- */
-function clean($string) {
-    return htmlspecialchars($string ?? '', ENT_QUOTES, 'UTF-8');
-}
+
+// ============================================
+// MESSAGES FLASH
+// ============================================
 
 /**
- * Tronque un texte
+ * Définit un message flash
  */
-function truncate($text, $length = 100, $suffix = '...') {
-    if (strlen($text) <= $length) {
-        return $text;
-    }
-    return substr($text, 0, $length) . $suffix;
-}
-
-/**
- * Affiche un message flash
- */
-function setFlashMessage($type, $message) {
+function setFlashMessage(string $type, string $message): void {
     $_SESSION['flash'] = ['type' => $type, 'message' => $message];
 }
 
-function getFlashMessage() {
+/**
+ * Récupère et efface le message flash
+ */
+function getFlashMessage(): ?array {
     if (isset($_SESSION['flash'])) {
         $flash = $_SESSION['flash'];
         unset($_SESSION['flash']);
@@ -344,43 +401,15 @@ function getFlashMessage() {
     return null;
 }
 
-/**
- * Génère un slug
- */
-function createSlug($string) {
-    $string = strtolower(trim($string));
-    $string = preg_replace('/[^a-z0-9-]/', '-', $string);
-    $string = preg_replace('/-+/', '-', $string);
-    return trim($string, '-');
-}
 
-/**
- * Génère un numéro de commande
- */
-function generateOrderNumber() {
-    return 'MARS-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -6));
-}
+// ============================================
+// EMAIL
+// ============================================
 
 /**
  * Envoie un email (simulation)
  */
-function sendEmail($to, $subject, $body) {
+function sendEmail(string $to, string $subject, string $body): bool {
     error_log("Email envoyé à $to: $subject");
     return true;
 }
-
-/**
- * Génère l'URL de connexion AMEA
- */
-function getAmeaLoginUrl() {
-    return 'https://amea.chaudly.com/oauth_authorize.php?' . http_build_query([
-        'client_id' => AMEA_CLIENT_ID,
-        'redirect_uri' => AMEA_REDIRECT_URI,
-        'response_type' => 'code',
-        'scope' => 'profile email',
-        'state' => bin2hex(random_bytes(16))
-    ]);
-}
-
-
-?>
