@@ -355,3 +355,32 @@ INSERT INTO mobile_money_accounts (operator, operator_name, phone_number, accoun
 ('airtel', 'Airtel Money', '+225 07 00 00 00 01', 'Mars Shop Airtel', TRUE),
 ('mvola', 'Mvola', '+261 34 00 000 01', 'Mars Shop Mvola', TRUE),
 ('orange', 'Orange Money', '+225 07 00 00 00 02', 'Mars Shop Orange', TRUE);
+
+-- Ajouter les colonnes pour la géolocalisation dans la table orders
+ALTER TABLE orders ADD COLUMN delivery_latitude DECIMAL(10,8) NULL;
+ALTER TABLE orders ADD COLUMN delivery_longitude DECIMAL(11,8) NULL;
+
+-- Ajouter la colonne sender_phone dans mobile_money_transactions si non existante
+ALTER TABLE mobile_money_transactions ADD COLUMN sender_phone VARCHAR(20) NULL AFTER transaction_id;
+
+-- ============================================
+-- MARS SHOP - GESTION DES IMAGES PRODUITS
+-- ============================================
+
+-- Modifier la table products pour la gestion des images
+ALTER TABLE products MODIFY image VARCHAR(255) NULL;
+ALTER TABLE products ADD COLUMN image_alt VARCHAR(255) NULL;
+
+-- Créer une table dédiée aux images additionnelles
+CREATE TABLE product_images (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    product_id INT NOT NULL,
+    image_path VARCHAR(255) NOT NULL,
+    image_alt VARCHAR(255),
+    sort_order INT DEFAULT 0,
+    is_primary BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+    INDEX idx_product (product_id),
+    INDEX idx_sort (sort_order)
+);

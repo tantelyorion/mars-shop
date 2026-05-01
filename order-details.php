@@ -1,5 +1,5 @@
 <?php
-// order-details.php - Détails d'une commande amélioré
+// order-details.php - Détails d'une commande avec images des produits
 require_once 'config/database.php';
 require_once 'includes/header.php';
 require_once 'includes/functions.php';
@@ -30,15 +30,27 @@ if (!$order) {
     exit();
 }
 
-// Récupérer les articles
+// Récupérer les articles avec leurs images
 $stmt = $conn->prepare("
-    SELECT oi.*, p.name 
+    SELECT oi.*, p.name, 
+           (SELECT image_path FROM product_images WHERE product_id = p.id AND is_primary = 1 LIMIT 1) as primary_image
     FROM order_items oi 
     JOIN products p ON oi.product_id = p.id 
     WHERE oi.order_id = ?
 ");
 $stmt->execute([$order_id]);
 $items = $stmt->fetchAll();
+
+// Ajouter le chemin de l'image pour chaque article
+foreach ($items as &$item) {
+    if (!empty($item['primary_image']) && file_exists('uploads/products/' . $item['primary_image'])) {
+        $item['product_image'] = 'uploads/products/' . $item['primary_image'];
+    } elseif (!empty($item['image']) && file_exists('uploads/products/' . $item['image'])) {
+        $item['product_image'] = 'uploads/products/' . $item['image'];
+    } else {
+        $item['product_image'] = null;
+    }
+}
 
 // Statuts possibles
 $statuses = [
@@ -168,7 +180,7 @@ $currentStatus = $statuses[$order['status']] ?? $statuses['pending'];
                 </div>
             </div>
             
-            <!-- Articles commandés -->
+            <!-- Articles commandés avec images -->
             <div class="items-section">
                 <div class="items-header">
                     <h3><i class="fas fa-boxes"></i> Articles commandés</h3>
@@ -191,7 +203,11 @@ $currentStatus = $statuses[$order['status']] ?? $statuses['pending'];
                                 <td class="product-cell">
                                     <div class="product-info-cell">
                                         <div class="product-image-cell">
-                                            <i class="fas fa-box-open"></i>
+                                            <?php if($item['product_image'] && file_exists($item['product_image'])): ?>
+                                                <img src="<?php echo $item['product_image']; ?>" alt="<?php echo clean($item['name']); ?>">
+                                            <?php else: ?>
+                                                <i class="fas fa-box-open"></i>
+                                            <?php endif; ?>
                                         </div>
                                         <div>
                                             <div class="product-name-cell"><?php echo clean($item['name']); ?></div>
@@ -449,7 +465,7 @@ $currentStatus = $statuses[$order['status']] ?? $statuses['pending'];
     font-size: 1.1rem;
 }
 
-/* Articles */
+/* Articles avec images */
 .items-section {
     margin-bottom: 30px;
 }
@@ -492,7 +508,7 @@ $currentStatus = $statuses[$order['status']] ?? $statuses['pending'];
 }
 
 .product-cell {
-    min-width: 250px;
+    min-width: 280px;
 }
 
 .product-info-cell {
@@ -502,17 +518,25 @@ $currentStatus = $statuses[$order['status']] ?? $statuses['pending'];
 }
 
 .product-image-cell {
-    width: 50px;
-    height: 50px;
+    width: 60px;
+    height: 60px;
     background: linear-gradient(135deg, var(--primary-dark), var(--primary));
     border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.product-image-cell img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 
 .product-image-cell i {
-    font-size: 1.2rem;
+    font-size: 1.5rem;
     color: rgba(255,255,255,0.5);
 }
 
@@ -610,14 +634,18 @@ $currentStatus = $statuses[$order['status']] ?? $statuses['pending'];
         text-align: center;
         justify-content: center;
     }
-}
-
-@media (max-width: 480px) {
+    
     .product-info-cell {
         flex-direction: column;
         text-align: center;
     }
     
+    .product-image-cell {
+        margin-bottom: 8px;
+    }
+}
+
+@media (max-width: 480px) {
     .payment-info {
         flex-direction: column;
         align-items: flex-start;
@@ -640,6 +668,10 @@ $currentStatus = $statuses[$order['status']] ?? $statuses['pending'];
         border: 1px solid #ccc;
         background: #f5f5f5 !important;
         color: #333 !important;
+    }
+    
+    .product-image-cell {
+        background: #f0f0f0;
     }
 }
 </style>

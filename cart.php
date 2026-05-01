@@ -1,5 +1,5 @@
 <?php
-// cart.php - Panier d'achat avec interface améliorée
+// cart.php - Panier d'achat avec miniatures des produits (CORRIGÉ)
 require_once 'config/database.php';
 require_once 'includes/header.php';
 require_once 'includes/functions.php';
@@ -9,30 +9,7 @@ $conn = getConnection();
 // Traitement des actions POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
-    // Mise à jour des quantités
-    if (isset($_POST['update_cart']) && isset($_POST['quantities'])) {
-        foreach ($_POST['quantities'] as $cart_id => $quantity) {
-            $quantity = max(0, (int)$quantity);
-            
-            if (isLoggedIn()) {
-                if ($quantity <= 0) {
-                    $stmt = $conn->prepare("DELETE FROM cart WHERE id = ? AND user_id = ?");
-                    $stmt->execute([$cart_id, $_SESSION['user_id']]);
-                } else {
-                    $stmt = $conn->prepare("UPDATE cart SET quantity = ? WHERE id = ? AND user_id = ?");
-                    $stmt->execute([$quantity, $cart_id, $_SESSION['user_id']]);
-                }
-            } else {
-                $product_id = str_replace('guest_', '', $cart_id);
-                updateCartQuantity($product_id, $quantity, true);
-            }
-        }
-        setFlashMessage('success', 'Panier mis à jour');
-        header('Location: cart.php');
-        exit();
-    }
-    
-    // Suppression d'un article
+    // Suppression d'un article (doit être traité AVANT la mise à jour)
     if (isset($_POST['remove_item']) && isset($_POST['cart_id'])) {
         $cart_id = $_POST['cart_id'];
         
@@ -56,10 +33,67 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: cart.php');
         exit();
     }
+    
+    // Mise à jour des quantités (à traiter après suppression)
+    if (isset($_POST['update_cart']) && isset($_POST['quantities'])) {
+        foreach ($_POST['quantities'] as $cart_id => $quantity) {
+            $quantity = max(0, (int)$quantity);
+            
+            if (isLoggedIn()) {
+                if ($quantity <= 0) {
+                    $stmt = $conn->prepare("DELETE FROM cart WHERE id = ? AND user_id = ?");
+                    $stmt->execute([$cart_id, $_SESSION['user_id']]);
+                } else {
+                    $stmt = $conn->prepare("UPDATE cart SET quantity = ? WHERE id = ? AND user_id = ?");
+                    $stmt->execute([$quantity, $cart_id, $_SESSION['user_id']]);
+                }
+            } else {
+                $product_id = str_replace('guest_', '', $cart_id);
+                updateCartQuantity($product_id, $quantity, true);
+            }
+        }
+        setFlashMessage('success', 'Panier mis à jour');
+        header('Location: cart.php');
+        exit();
+    }
 }
 
-// Récupérer les articles du panier
-$cart_items = getCartItems();
+// Récupérer les articles du panier avec l'image principale
+$cart_items = [];
+if (isLoggedIn()) {
+    $stmt = $conn->prepare("
+        SELECT c.id as cart_id, c.quantity, p.*,
+               (SELECT image_path FROM product_images WHERE product_id = p.id AND is_primary = 1 LIMIT 1) as primary_image
+        FROM cart c 
+        JOIN products p ON c.product_id = p.id 
+        WHERE c.user_id = ?
+    ");
+    $stmt->execute([$_SESSION['user_id']]);
+    $cart_items = $stmt->fetchAll();
+} else {
+    if (isset($_SESSION['guest_cart']) && !empty($_SESSION['guest_cart'])) {
+        $ids = array_column($_SESSION['guest_cart'], 'product_id');
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $conn->prepare("
+            SELECT p.*,
+                   (SELECT image_path FROM product_images WHERE product_id = p.id AND is_primary = 1 LIMIT 1) as primary_image
+            FROM products p WHERE p.id IN ($placeholders)
+        ");
+        $stmt->execute($ids);
+        $products = $stmt->fetchAll();
+        
+        foreach ($products as $product) {
+            foreach ($_SESSION['guest_cart'] as $item) {
+                if ($item['product_id'] == $product['id']) {
+                    $product['cart_id'] = 'guest_' . $product['id'];
+                    $product['quantity'] = $item['quantity'];
+                    $cart_items[] = $product;
+                    break;
+                }
+            }
+        }
+    }
+}
 
 // Calcul des totaux
 $subtotal = 0;
@@ -93,7 +127,19 @@ $total = $subtotal;
             <div class="cart-item" data-cart-id="<?php echo $item['cart_id']; ?>">
                 <div class="cart-product">
                     <div class="cart-product-image">
-                        <i class="fas fa-box"></i>
+                        <?php 
+                        $image_path = null;
+                        if(!empty($item['primary_image']) && file_exists('uploads/products/' . $item['primary_image'])) {
+                            $image_path = 'uploads/products/' . $item['primary_image'];
+                        } elseif(!empty($item['image']) && file_exists('uploads/products/' . $item['image'])) {
+                            $image_path = 'uploads/products/' . $item['image'];
+                        }
+                        ?>
+                        <?php if($image_path): ?>
+                            <img src="<?php echo $image_path; ?>" alt="<?php echo clean($item['name']); ?>" style="width:100%;height:100%;object-fit:cover;border-radius:12px;">
+                        <?php else: ?>
+                            <i class="fas fa-box"></i>
+                        <?php endif; ?>
                     </div>
                     <div class="cart-product-info">
                         <strong><?php echo clean($item['name']); ?></strong>
@@ -123,12 +169,9 @@ $total = $subtotal;
                     <?php echo formatPrice($item['price'] * $item['quantity']); ?>
                 </div>
                 <div class="cart-action">
-                    <button type="submit" name="remove_item" value="1" class="cart-remove"
-                            formaction="?remove=<?php echo $item['cart_id']; ?>"
-                            onclick="return confirm('Supprimer cet article ?')">
+                    <button type="button" class="cart-remove" data-cart-id="<?php echo $item['cart_id']; ?>" data-product-id="<?php echo $item['id']; ?>">
                         <i class="fas fa-trash-alt"></i>
                     </button>
-                    <input type="hidden" name="cart_id" value="<?php echo $item['cart_id']; ?>">
                 </div>
             </div>
             <?php endforeach; ?>
@@ -137,21 +180,30 @@ $total = $subtotal;
         <!-- Version mobile -->
         <div class="cart-mobile">
             <?php foreach($cart_items as $item): ?>
-            <div class="cart-card">
+            <div class="cart-card" data-cart-id="<?php echo $item['cart_id']; ?>">
                 <div class="cart-card-header">
                     <div class="cart-product-image">
-                        <i class="fas fa-box"></i>
+                        <?php 
+                        $image_path = null;
+                        if(!empty($item['primary_image']) && file_exists('uploads/products/' . $item['primary_image'])) {
+                            $image_path = 'uploads/products/' . $item['primary_image'];
+                        } elseif(!empty($item['image']) && file_exists('uploads/products/' . $item['image'])) {
+                            $image_path = 'uploads/products/' . $item['image'];
+                        }
+                        ?>
+                        <?php if($image_path): ?>
+                            <img src="<?php echo $image_path; ?>" alt="<?php echo clean($item['name']); ?>" style="width:100%;height:100%;object-fit:cover;border-radius:12px;">
+                        <?php else: ?>
+                            <i class="fas fa-box"></i>
+                        <?php endif; ?>
                     </div>
                     <div class="cart-product-info">
                         <strong><?php echo clean($item['name']); ?></strong>
                         <div class="product-category"><?php echo clean($item['category']); ?></div>
                     </div>
-                    <button type="submit" name="remove_item" value="1" class="cart-remove-mobile"
-                            formaction="?remove=<?php echo $item['cart_id']; ?>"
-                            onclick="return confirm('Supprimer cet article ?')">
+                    <button type="button" class="cart-remove-mobile" data-cart-id="<?php echo $item['cart_id']; ?>" data-product-id="<?php echo $item['id']; ?>">
                         <i class="fas fa-trash-alt"></i>
                     </button>
-                    <input type="hidden" name="cart_id" value="<?php echo $item['cart_id']; ?>">
                 </div>
                 <div class="cart-card-body">
                     <div class="cart-price-row">
@@ -224,7 +276,7 @@ $total = $subtotal;
         <h3>Votre panier est vide</h3>
         <p>Découvrez nos produits et ajoutez-les à votre panier</p>
         <a href="shop.php" class="btn-primary">
-            <i class="fas fa-store"></i> Découvrir la boutique
+            Découvrir la boutique
         </a>
     </div>
     <?php endif; ?>
@@ -302,11 +354,18 @@ $total = $subtotal;
     display: flex;
     align-items: center;
     justify-content: center;
+    overflow: hidden;
 }
 
 .cart-product-image i {
     font-size: 1.8rem;
     color: rgba(255, 255, 255, 0.5);
+}
+
+.cart-product-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 
 .cart-product-info strong {
@@ -591,6 +650,10 @@ $total = $subtotal;
 </style>
 
 <script>
+// ============================================
+// CART.JS - CORRIGÉ
+// ============================================
+
 // Gestion des boutons + et -
 document.querySelectorAll('.qty-minus, .qty-plus').forEach(btn => {
     btn.addEventListener('click', function(e) {
@@ -598,14 +661,11 @@ document.querySelectorAll('.qty-minus, .qty-plus').forEach(btn => {
         
         const cartId = this.dataset.cartId;
         let input;
-        let totalElement;
-        let isMobile = false;
         
         // Trouver l'input correspondant
         input = document.querySelector(`.cart-qty[data-cart-id="${cartId}"]`);
         if (!input) {
             input = document.querySelector(`.cart-qty-mobile[data-cart-id="${cartId}"]`);
-            isMobile = true;
         }
         
         if (!input) return;
@@ -629,13 +689,80 @@ document.querySelectorAll('.qty-minus, .qty-plus').forEach(btn => {
     });
 });
 
+// Gestion de la suppression (AJAX)
+document.querySelectorAll('.cart-remove, .cart-remove-mobile').forEach(btn => {
+    btn.addEventListener('click', async function(e) {
+        e.preventDefault();
+        
+        const cartId = this.dataset.cartId;
+        const productId = this.dataset.productId;
+        
+        if (!confirm('Supprimer cet article du panier ?')) {
+            return;
+        }
+        
+        const button = this;
+        const originalHTML = button.innerHTML;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        button.disabled = true;
+        
+        try {
+            const formData = new FormData();
+            formData.append('cart_id', cartId);
+            formData.append('product_id', productId);
+            formData.append('action', 'remove');
+            
+            const response = await fetch('ajax-remove-from-cart.php', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                // Supprimer la ligne du panier visuellement
+                const row = document.querySelector(`.cart-item[data-cart-id="${cartId}"], .cart-card[data-cart-id="${cartId}"]`);
+                if (row) {
+                    row.style.opacity = '0';
+                    setTimeout(() => {
+                        row.remove();
+                        updateCartTotals();
+                        
+                        // Vérifier si le panier est vide
+                        if (document.querySelectorAll('.cart-item, .cart-card').length === 0) {
+                            location.reload();
+                        }
+                    }, 300);
+                }
+                showNotification('Article supprimé', 'info');
+                
+                // Mettre à jour le badge du panier
+                const cartBadge = document.querySelector('.nav-cart .badge');
+                if (cartBadge && result.cart_count !== undefined) {
+                    cartBadge.textContent = result.cart_count;
+                    cartBadge.style.display = result.cart_count > 0 ? 'inline-flex' : 'none';
+                }
+            } else {
+                button.innerHTML = originalHTML;
+                button.disabled = false;
+                showNotification(result.message || 'Erreur lors de la suppression', 'error');
+            }
+        } catch (error) {
+            console.error('Erreur:', error);
+            button.innerHTML = originalHTML;
+            button.disabled = false;
+            showNotification('Erreur de connexion', 'error');
+        }
+    });
+});
+
 // Mise à jour automatique du total lors du changement de quantité
 function updateCartTotals() {
     let grandTotal = 0;
     
     // Pour chaque ligne de panier
     document.querySelectorAll('.cart-item, .cart-card').forEach(row => {
-        let price, quantity, totalElement;
+        let price, quantity;
         
         // Trouver le prix
         const priceElement = row.querySelector('.cart-price');
@@ -712,10 +839,74 @@ document.querySelectorAll('.cart-qty, .cart-qty-mobile').forEach(input => {
     });
 });
 
+// Notification
+function showNotification(message, type = 'success') {
+    const existing = document.querySelector('.cart-notification');
+    if (existing) existing.remove();
+    
+    const notification = document.createElement('div');
+    notification.className = 'cart-notification';
+    
+    const colors = {
+        success: '#10b981',
+        error: '#ef4444',
+        info: '#3b82f6'
+    };
+    
+    const icons = {
+        success: 'fa-check-circle',
+        error: 'fa-exclamation-circle',
+        info: 'fa-info-circle'
+    };
+    
+    notification.innerHTML = `
+        <i class="fas ${icons[type] || icons.success}"></i>
+        <span>${message}</span>
+        <button class="notification-close">&times;</button>
+    `;
+    
+    notification.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: #1a1a24;
+        border-left: 4px solid ${colors[type] || colors.success};
+        padding: 12px 20px;
+        border-radius: 8px;
+        z-index: 10000;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        animation: slideInRight 0.3s ease;
+    `;
+    
+    document.body.appendChild(notification);
+    
+    const closeBtn = notification.querySelector('.notification-close');
+    closeBtn.style.cssText = 'background:none;border:none;color:rgba(255,255,255,0.5);cursor:pointer;font-size:1.2rem;margin-left:8px';
+    closeBtn.onclick = () => notification.remove();
+    
+    setTimeout(() => notification.remove(), 3000);
+}
+
 // Initialiser les totaux au chargement
 document.addEventListener('DOMContentLoaded', function() {
     updateCartTotals();
 });
+
+// Animation keyframes
+if (!document.querySelector('#cart-styles')) {
+    const style = document.createElement('style');
+    style.id = 'cart-styles';
+    style.textContent = `
+        @keyframes slideInRight {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+    `;
+    document.head.appendChild(style);
+}
 </script>
 
 <?php require_once 'includes/footer.php'; ?>

@@ -15,6 +15,7 @@
                     <a href="shop.php">Boutique</a>
                     <a href="contact.php">Contact</a>
                     <a href="cgv.php">CGV</a>
+                    <a href="about.php">A propos</a>
                 </div>
                 <div>
                     <h4>Contact</h4>
@@ -23,7 +24,7 @@
                 </div>
             </div>
             <div class="footer-bottom">
-                <p>&copy; 2024 Mars Shop. Tous droits réservés.</p>
+                <p>&copy; <?= date('Y'); ?> Mars Shop. Tous droits réservés.</p>
             </div>
         </div>
     </footer>

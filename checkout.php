@@ -1,5 +1,5 @@
 <?php
-// checkout.php - Version finale entièrement corrigée
+// checkout.php - Version avec géolocalisation GPS et Mobile Money complet
 require_once 'config/database.php';
 require_once 'includes/header.php';
 require_once 'includes/functions.php';
@@ -30,52 +30,67 @@ foreach ($cart_items as $item) {
 }
 $total = $subtotal;
 
-// Récupérer les méthodes de paiement actives
+// Récupérer les méthodes de paiement ACTIVES
 $stmt = $conn->prepare("SELECT * FROM payment_methods WHERE is_active = 1 ORDER BY sort_order");
 $stmt->execute();
-$payment_methods = $stmt->fetchAll();
+$active_payment_methods = $stmt->fetchAll();
 
 // Récupérer les comptes Mobile Money actifs
 $stmt = $conn->prepare("SELECT * FROM mobile_money_accounts WHERE is_active = 1");
 $stmt->execute();
 $mobile_accounts = $stmt->fetchAll();
 
-// Infos utilisateur déjà connecté
+// Infos utilisateur (déjà connecté)
 $stmt = $conn->prepare("SELECT username, full_name, email, phone FROM users WHERE id = ?");
 $stmt->execute([$user_id]);
 $user = $stmt->fetch();
+
+// Configuration des icônes
+$method_icons = [
+    'credit_card' => 'fa-credit-card',
+    'paypal' => 'fa-paypal',
+    'mobile_money' => 'fa-mobile-alt',
+    'cash' => 'fa-money-bill-wave'
+];
+
+$method_names = [
+    'credit_card' => 'Carte bancaire',
+    'paypal' => 'PayPal',
+    'mobile_money' => 'Mobile Money',
+    'cash' => 'Paiement à la livraison'
+];
+
+$method_descs = [
+    'credit_card' => 'Visa, Mastercard (paiement sécurisé)',
+    'paypal' => 'Paiement via votre compte PayPal',
+    'mobile_money' => 'Airtel Money, Mvola, Orange Money',
+    'cash' => 'Payez en espèces à la réception'
+];
+
+// Logos des opérateurs Mobile Money
+$operator_logos = [
+    'airtel' => 'assets/pixels/airtel-logo.png',
+    'mvola' => 'assets/pixels/mvola-logo.png',
+    'orange' => 'assets/pixels/orange-money-logo.png'
+];
 ?>
 
 <!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Finaliser ma commande - Mars Shop</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: linear-gradient(135deg, #0f0f14 0%, #0a0a0e 100%);
-            color: #ffffff;
-            line-height: 1.5;
-            min-height: 100vh;
+            font-family: 'Inter', sans-serif;
+            background: #0f0f14;
+            color: #fff;
         }
-        
-        .container {
-            max-width: 1280px;
-            margin: 0 auto;
-            padding: 0 20px;
-        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
         
         .checkout-header {
             text-align: center;
@@ -83,16 +98,8 @@ $user = $stmt->fetch();
             border-bottom: 1px solid #2a2a35;
             margin-bottom: 30px;
         }
-        
-        .checkout-header h1 {
-            font-size: 1.8rem;
-            margin-bottom: 8px;
-        }
-        
-        .checkout-header p {
-            color: #a0a0b0;
-            font-size: 0.9rem;
-        }
+        .checkout-header h1 { font-size: 1.8rem; margin-bottom: 8px; }
+        .checkout-header p { color: #a0a0b0; }
         
         .checkout-grid {
             display: grid;
@@ -103,22 +110,17 @@ $user = $stmt->fetch();
         
         .checkout-form {
             background: #1a1a24;
-            border-radius: 24px;
+            border-radius: 20px;
             padding: 28px;
             border: 1px solid #2a2a35;
         }
         
         .form-card {
-            margin-bottom: 32px;
-            padding-bottom: 32px;
+            margin-bottom: 28px;
+            padding-bottom: 28px;
             border-bottom: 1px solid #2a2a35;
         }
-        
-        .form-card:last-child {
-            border-bottom: none;
-            margin-bottom: 0;
-            padding-bottom: 0;
-        }
+        .form-card:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
         
         .card-title {
             font-size: 1.1rem;
@@ -128,119 +130,49 @@ $user = $stmt->fetch();
             align-items: center;
             gap: 10px;
         }
+        .card-title i { color: #c14432; }
         
-        .card-title i {
-            color: #c14432;
-            width: 24px;
-        }
-        
-        .address-tabs {
+        /* Adresse - Choix entre GPS et manuel */
+        .address-options {
             display: flex;
             gap: 12px;
-            margin-bottom: 24px;
-            flex-wrap: wrap;
+            margin-bottom: 20px;
         }
-        
-        .address-tab {
+        .address-btn {
             flex: 1;
-            min-width: 140px;
-        }
-        
-        .address-tab input {
-            display: none;
-        }
-        
-        .tab-btn {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
             padding: 12px;
             background: #2a2a35;
             border: 2px solid #3a3a45;
             border-radius: 12px;
             cursor: pointer;
-            transition: all 0.2s;
+            text-align: center;
             font-weight: 500;
-            font-size: 0.9rem;
+            transition: all 0.2s;
         }
-        
-        .address-tab input:checked + .tab-btn {
+        .address-btn.active {
             border-color: #c14432;
-            background: rgba(193, 68, 50, 0.15);
+            background: rgba(193,68,50,0.15);
             color: #c14432;
         }
         
-        .address-panel {
-            display: none;
-            animation: fadeIn 0.3s ease;
-        }
+        .address-panel { display: none; margin-top: 16px; }
+        .address-panel.active { display: block; }
         
-        .address-panel.active {
-            display: block;
-        }
-        
-        .form-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
-        }
-        
-        .form-group {
-            margin-bottom: 16px;
-        }
-        
-        .form-group label {
-            display: block;
-            margin-bottom: 8px;
-            font-size: 0.8rem;
-            font-weight: 500;
-            color: #a0a0b0;
-        }
-        
-        .form-group input,
-        .form-group textarea,
-        .form-group select {
-            width: 100%;
-            padding: 12px 16px;
-            background: #2a2a35;
-            border: 1px solid #3a3a45;
-            border-radius: 12px;
-            color: white;
-            font-size: 0.9rem;
-            transition: all 0.2s;
-        }
-        
-        .form-group input:focus,
-        .form-group textarea:focus,
-        .form-group select:focus {
-            outline: none;
-            border-color: #c14432;
-            box-shadow: 0 0 0 3px rgba(193, 68, 50, 0.1);
-        }
-        
+        /* Géolocalisation GPS */
         .geo-btn {
             width: 100%;
-            background: linear-gradient(135deg, #10b981, #059669);
+            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
             border: none;
             padding: 14px;
             border-radius: 12px;
             color: white;
             cursor: pointer;
-            font-size: 0.9rem;
             font-weight: 500;
             display: flex;
             align-items: center;
             justify-content: center;
             gap: 8px;
-            transition: all 0.2s;
         }
-        
-        .geo-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-        }
-        
         .geo-status {
             font-size: 0.75rem;
             padding: 10px;
@@ -248,47 +180,67 @@ $user = $stmt->fetch();
             margin-top: 12px;
             text-align: center;
         }
+        .geo-status.success { background: rgba(16,185,129,0.1); color: #10b981; }
+        .geo-status.error { background: rgba(239,68,68,0.1); color: #ef4444; }
+        .geo-status.info { background: rgba(59,130,246,0.1); color: #3b82f6; }
         
-        .geo-status.success { background: rgba(16, 185, 129, 0.1); color: #10b981; }
-        .geo-status.error { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
-        .geo-status.info { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
-        
-        .phone-field {
-            margin-top: 20px;
-            padding-top: 20px;
-            border-top: 1px solid #2a2a35;
+        .gps-coords-card {
+            background: rgba(59,130,246,0.1);
+            border: 1px solid #3b82f6;
+            border-radius: 12px;
+            padding: 12px;
+            margin-top: 12px;
+        }
+        .gps-coords-card p {
+            font-size: 0.85rem;
+            margin-bottom: 4px;
+            font-family: monospace;
+        }
+        .gps-coords-card strong {
+            color: #3b82f6;
         }
         
-        /* Modes de paiement */
-        .payment-grid {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
+        /* Adresse manuelle */
+        .form-group { margin-bottom: 16px; }
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 0.8rem;
+            color: #a0a0b0;
+        }
+        .form-group input, .form-group textarea, .form-group select {
+            width: 100%;
+            padding: 12px 16px;
+            background: #2a2a35;
+            border: 1px solid #3a3a45;
+            border-radius: 12px;
+            color: white;
+            font-size: 0.9rem;
+        }
+        .form-group input:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: #c14432;
         }
         
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        
+        /* Paiement */
         .payment-item {
             background: #2a2a35;
             border: 2px solid #3a3a45;
             border-radius: 16px;
+            margin-bottom: 12px;
             cursor: pointer;
             transition: all 0.2s;
         }
-        
-        .payment-item:hover {
-            border-color: #c14432;
-        }
-        
-        .payment-item input {
-            display: none;
-        }
-        
+        .payment-item:hover { border-color: #c14432; }
+        .payment-item.active { border-color: #c14432; background: rgba(193,68,50,0.1); }
         .payment-item-content {
             display: flex;
             align-items: center;
             gap: 16px;
             padding: 16px;
         }
-        
         .payment-radio {
             width: 22px;
             height: 22px;
@@ -297,12 +249,8 @@ $user = $stmt->fetch();
             position: relative;
             flex-shrink: 0;
         }
-        
-        .payment-item input:checked ~ .payment-item-content .payment-radio {
-            border-color: #c14432;
-        }
-        
-        .payment-item input:checked ~ .payment-item-content .payment-radio::after {
+        .payment-item.active .payment-radio { border-color: #c14432; }
+        .payment-item.active .payment-radio::after {
             content: '';
             position: absolute;
             top: 3px;
@@ -312,7 +260,6 @@ $user = $stmt->fetch();
             background: #c14432;
             border-radius: 50%;
         }
-        
         .payment-icon {
             width: 48px;
             height: 48px;
@@ -323,78 +270,54 @@ $user = $stmt->fetch();
             justify-content: center;
             flex-shrink: 0;
         }
-        
-        .payment-icon i {
-            font-size: 1.6rem;
-        }
-        
-        .payment-info {
-            flex: 1;
-        }
-        
-        .payment-name {
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
-        
-        .payment-desc {
-            font-size: 0.7rem;
-            color: #a0a0b0;
-        }
+        .payment-icon i { font-size: 1.5rem; }
+        .payment-info { flex: 1; }
+        .payment-name { font-weight: 600; margin-bottom: 4px; }
+        .payment-desc { font-size: 0.7rem; color: #a0a0b0; }
         
         .payment-details {
-            margin-top: 16px;
+            display: none;
             padding: 20px;
             background: rgba(0,0,0,0.2);
             border-radius: 16px;
-            display: none;
+            margin-top: 0;
         }
+        .payment-details.show { display: block; }
         
-        .payment-details.active {
-            display: block;
-            animation: fadeIn 0.3s ease;
-        }
-        
+        /* Mobile Money */
         .operator-group {
             display: flex;
-            gap: 12px;
+            gap: 16px;
             margin-bottom: 20px;
             flex-wrap: wrap;
         }
-        
-        .operator-option {
-            flex: 1;
-            min-width: 100px;
-            cursor: pointer;
-        }
-        
-        .operator-option input {
-            display: none;
-        }
-        
         .operator-card {
+            flex: 1;
+            min-width: 110px;
             background: #2a2a35;
             border: 2px solid #3a3a45;
             border-radius: 12px;
-            padding: 12px;
             text-align: center;
+            cursor: pointer;
             transition: all 0.2s;
+            padding: 12px;
         }
-        
-        .operator-option input:checked + .operator-card {
-            border-color: #c14432;
-            background: rgba(193, 68, 50, 0.1);
+        .operator-card:hover { border-color: #c14432; }
+        .operator-card.active { border-color: #c14432; background: rgba(193,68,50,0.1); }
+        .operator-logo {
+            width: 50px;
+            height: 50px;
+            margin: 0 auto 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
-        
-        .operator-card i {
-            font-size: 1.5rem;
-            margin-bottom: 6px;
-            display: block;
+        .operator-logo img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
         }
-        
-        .operator-card span {
-            font-size: 0.8rem;
-        }
+        .operator-card span { display: block; font-size: 0.8rem; font-weight: 500; }
         
         .mobile-info {
             background: rgba(0,0,0,0.3);
@@ -402,42 +325,36 @@ $user = $stmt->fetch();
             padding: 16px;
             margin: 16px 0;
         }
-        
-        .info-note {
-            background: rgba(59, 130, 246, 0.1);
-            border-radius: 8px;
-            padding: 12px;
-            font-size: 0.8rem;
-            color: #3b82f6;
-            text-align: center;
-        }
-        
+        .mobile-info ol { padding-left: 20px; margin: 10px 0; }
+        .mobile-info li { margin-bottom: 6px; font-size: 0.85rem; }
+        .shop-number { color: #c14432; font-weight: 600; font-size: 1rem; }
         .warning-note {
-            background: rgba(245, 158, 11, 0.1);
-            border-radius: 8px;
+            background: rgba(245,158,11,0.1);
             padding: 10px;
+            border-radius: 8px;
             font-size: 0.7rem;
             color: #f59e0b;
             margin-top: 12px;
         }
-        
-        .shop-number {
-            color: #c14432;
-            font-weight: 600;
-            font-size: 1rem;
+        .info-note {
+            background: rgba(59,130,246,0.1);
+            padding: 12px;
+            border-radius: 10px;
+            text-align: center;
+            font-size: 0.85rem;
+            color: #3b82f6;
         }
         
-        /* Résumé commande */
+        /* Résumé */
         .order-summary {
             background: #1a1a24;
-            border-radius: 24px;
+            border-radius: 20px;
             padding: 24px;
             height: fit-content;
             position: sticky;
             top: 100px;
             border: 1px solid #2a2a35;
         }
-        
         .summary-title {
             font-size: 1.1rem;
             font-weight: 600;
@@ -448,78 +365,26 @@ $user = $stmt->fetch();
             align-items: center;
             gap: 10px;
         }
-        
-        .items-list {
-            max-height: 300px;
-            overflow-y: auto;
-            margin-bottom: 16px;
-        }
-        
         .summary-item {
             display: flex;
             justify-content: space-between;
             padding: 10px 0;
             border-bottom: 1px solid #2a2a35;
         }
-        
-        .item-name {
-            font-size: 0.85rem;
-        }
-        
-        .item-qty {
-            font-size: 0.7rem;
-            color: #a0a0b0;
-            margin-left: 6px;
-        }
-        
-        .item-price {
-            font-weight: 500;
-            color: #c14432;
-        }
-        
-        .summary-divider {
-            height: 1px;
-            background: #2a2a35;
-            margin: 16px 0;
-        }
-        
+        .summary-divider { height: 1px; background: #2a2a35; margin: 16px 0; }
         .summary-line {
             display: flex;
             justify-content: space-between;
             margin-bottom: 12px;
         }
-        
         .summary-line.total {
             margin-top: 16px;
             padding-top: 16px;
             border-top: 1px solid #2a2a35;
             font-size: 1.1rem;
         }
-        
-        .summary-line.total strong {
-            color: #c14432;
-            font-size: 1.2rem;
-        }
-        
-        .free-shipping {
-            color: #10b981;
-        }
-        
-        .secure-badge {
-            margin-top: 20px;
-            padding: 12px;
-            background: rgba(16, 185, 129, 0.1);
-            border-radius: 12px;
-            text-align: center;
-            font-size: 0.75rem;
-            color: #10b981;
-        }
-        
-        .form-actions {
-            margin-top: 24px;
-            padding-top: 20px;
-            border-top: 1px solid #2a2a35;
-        }
+        .summary-line.total strong { color: #c14432; font-size: 1.2rem; }
+        .free-shipping { color: #10b981; }
         
         .btn-submit {
             width: 100%;
@@ -531,18 +396,10 @@ $user = $stmt->fetch();
             font-size: 1rem;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.2s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
+            margin-top: 20px;
+            transition: transform 0.2s;
         }
-        
-        .btn-submit:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 20px rgba(193, 68, 50, 0.3);
-        }
-        
+        .btn-submit:hover { transform: translateY(-2px); }
         .btn-back {
             display: block;
             text-align: center;
@@ -550,45 +407,16 @@ $user = $stmt->fetch();
             color: #a0a0b0;
             text-decoration: none;
             font-size: 0.85rem;
-            transition: color 0.2s;
         }
-        
-        .btn-back:hover {
-            color: #c14432;
-        }
-        
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(-10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        @media (max-width: 968px) {
-            .checkout-grid {
-                grid-template-columns: 1fr;
-                gap: 24px;
-            }
-            .order-summary {
-                position: static;
-                order: 2;
-            }
-            .checkout-form { order: 1; }
-        }
+        .btn-back:hover { color: #c14432; }
         
         @media (max-width: 768px) {
-            .checkout-header h1 { font-size: 1.5rem; }
-            .checkout-form { padding: 20px; }
-            .form-row { grid-template-columns: 1fr; gap: 0; }
-            .address-tabs { flex-direction: column; }
-            .address-tab { min-width: auto; }
+            .checkout-grid { grid-template-columns: 1fr; }
+            .order-summary { position: static; }
+            .form-row { grid-template-columns: 1fr; }
+            .address-options { flex-direction: column; }
             .operator-group { flex-direction: column; }
-            .payment-item-content { flex-wrap: wrap; }
-        }
-        
-        @media (max-width: 480px) {
-            .container { padding: 0 16px; }
-            .checkout-form { padding: 16px; }
-            .payment-icon { width: 40px; height: 40px; }
-            .payment-icon i { font-size: 1.2rem; }
+            .operator-card { width: 100%; }
         }
     </style>
 </head>
@@ -606,62 +434,59 @@ $user = $stmt->fetch();
         <div class="checkout-form">
             <form method="POST" action="payment-process.php" id="checkoutForm">
                 
-                <!-- ADRESSE DE LIVRAISON -->
+                <!-- ==================== POINT DE LIVRAISON ==================== -->
                 <div class="form-card">
                     <div class="card-title">
                         <i class="fas fa-map-marker-alt"></i>
-                        <span>Adresse de livraison</span>
+                        <span>Point de livraison</span>
                     </div>
                     
-                    <div class="address-tabs">
-                        <label class="address-tab">
-                            <input type="radio" name="address_type" value="auto" id="autoAddressRadio" checked>
-                            <div class="tab-btn">
-                                <i class="fas fa-location-dot"></i>
-                                <span>Géolocalisation</span>
-                            </div>
-                        </label>
-                        <label class="address-tab">
-                            <input type="radio" name="address_type" value="manual" id="manualAddressRadio">
-                            <div class="tab-btn">
-                                <i class="fas fa-pen-alt"></i>
-                                <span>Saisie manuelle</span>
-                            </div>
-                        </label>
+                    <div class="address-options">
+                        <div class="address-btn" data-type="gps">
+                            <i class="fas fa-location-dot"></i> Géolocalisation GPS
+                        </div>
+                        <div class="address-btn" data-type="manual">
+                            <i class="fas fa-pen-alt"></i> Adresse manuelle
+                        </div>
                     </div>
                     
-                    <!-- Géolocalisation -->
-                    <div id="autoPanel" class="address-panel active">
+                    <!-- Panneau Géolocalisation GPS -->
+                    <div id="gpsPanel" class="address-panel active">
                         <button type="button" id="detectLocationBtn" class="geo-btn">
-                            <i class="fas fa-location-dot"></i> Détecter ma position
+                            <i class="fas fa-map-pin"></i> Me localiser (GPS)
                         </button>
                         <div id="geoStatus" class="geo-status"></div>
-                        <!-- Champ caché pour stocker l'adresse détectée -->
-                        <input type="hidden" id="detectedAddress" name="detected_address" value="">
-                        <input type="hidden" id="detectedPostalCode" name="detected_postal_code" value="">
-                        <input type="hidden" id="detectedCity" name="detected_city" value="">
-                        <input type="hidden" id="detectedCountry" name="detected_country" value="">
+                        <div id="gpsCoordsDisplay" style="display: none;">
+                            <div class="gps-coords-card">
+                                <p><i class="fas fa-satellite-dish"></i> <strong>Coordonnées GPS :</strong></p>
+                                <p id="displayLat">Latitude : --</p>
+                                <p id="displayLng">Longitude : --</p>
+                                <p style="font-size: 0.7rem; margin-top: 8px;"><i class="fas fa-info-circle"></i> Ces coordonnées seront transmises au livreur</p>
+                            </div>
+                        </div>
+                        <input type="hidden" id="deliveryLatitude" name="delivery_latitude">
+                        <input type="hidden" id="deliveryLongitude" name="delivery_longitude">
                     </div>
                     
-                    <!-- Saisie manuelle -->
+                    <!-- Panneau Adresse manuelle -->
                     <div id="manualPanel" class="address-panel">
                         <div class="form-group">
                             <label>Adresse complète</label>
-                            <textarea name="manual_address" id="manualAddress" rows="2" placeholder="Numéro, rue, complément..."></textarea>
+                            <textarea id="manualAddress" rows="2" placeholder="Numéro, rue, complément..."></textarea>
                         </div>
                         <div class="form-row">
                             <div class="form-group">
                                 <label>Code postal</label>
-                                <input type="text" name="manual_zip" id="manualZip" placeholder="75001">
+                                <input type="text" id="manualZip" placeholder="75001">
                             </div>
                             <div class="form-group">
                                 <label>Ville</label>
-                                <input type="text" name="manual_city" id="manualCity" placeholder="Paris">
+                                <input type="text" id="manualCity" placeholder="Paris">
                             </div>
                         </div>
                         <div class="form-group">
                             <label>Pays</label>
-                            <select name="manual_country" id="manualCountry">
+                            <select id="manualCountry">
                                 <option value="France">France</option>
                                 <option value="Belgique">Belgique</option>
                                 <option value="Suisse">Suisse</option>
@@ -672,40 +497,42 @@ $user = $stmt->fetch();
                         </div>
                     </div>
                     
-                    <!-- Téléphone -->
-                    <div class="phone-field">
-                        <div class="form-group">
-                            <label><i class="fas fa-phone"></i> Téléphone (pour le livreur)</label>
-                            <input type="tel" name="phone" id="phoneNumber" placeholder="Votre numéro de téléphone" value="<?php echo clean($user['phone']); ?>">
-                            <small style="font-size: 0.7rem; color: #a0a0b0;">Optionnel mais recommandé</small>
-                        </div>
-                    </div>
+                    <!-- Champs cachés pour l'envoi (adresse manuelle) -->
+                    <input type="hidden" name="address" id="finalAddress">
+                    <input type="hidden" name="postal_code" id="finalZip">
+                    <input type="hidden" name="city" id="finalCity">
+                    <input type="hidden" name="country" id="finalCountry">
                 </div>
                 
-                <!-- MODE DE PAIEMENT -->
+                <!-- ==================== MODE DE PAIEMENT ==================== -->
                 <div class="form-card">
                     <div class="card-title">
                         <i class="fas fa-money-bill-wave"></i>
                         <span>Mode de paiement</span>
                     </div>
                     
-                    <div class="payment-grid">
-                        <!-- Carte Bancaire -->
-                        <label class="payment-item">
-                            <input type="radio" name="payment_method" value="credit_card" id="paymentCard">
+                    <div class="payment-list" id="paymentList">
+                        <?php 
+                        $first_method = true;
+                        foreach($active_payment_methods as $method): 
+                            $method_name = $method['name'];
+                        ?>
+                        <div class="payment-item <?php echo $first_method ? 'active' : ''; ?>" data-method="<?php echo $method_name; ?>">
                             <div class="payment-item-content">
                                 <div class="payment-radio"></div>
                                 <div class="payment-icon">
-                                    <i class="fab fa-cc-visa"></i>
-                                    <i class="fab fa-cc-mastercard" style="margin-left: -8px;"></i>
+                                    <i class="fas <?php echo $method_icons[$method_name] ?? 'fa-credit-card'; ?>"></i>
                                 </div>
                                 <div class="payment-info">
-                                    <div class="payment-name">Carte bancaire</div>
-                                    <div class="payment-desc">Visa, Mastercard (paiement sécurisé)</div>
+                                    <div class="payment-name"><?php echo $method_names[$method_name] ?? ucfirst($method_name); ?></div>
+                                    <div class="payment-desc"><?php echo $method_descs[$method_name] ?? ''; ?></div>
                                 </div>
                             </div>
-                        </label>
-                        <div id="cardFields" class="payment-details">
+                        </div>
+                        
+                        <!-- Détails Carte Bancaire -->
+                        <?php if($method_name === 'credit_card'): ?>
+                        <div id="cardDetails" class="payment-details <?php echo $first_method ? 'show' : ''; ?>">
                             <div class="form-row">
                                 <div class="form-group">
                                     <label>Numéro de carte</label>
@@ -723,147 +550,113 @@ $user = $stmt->fetch();
                                 </div>
                             </div>
                         </div>
+                        <?php endif; ?>
                         
-                        <!-- PayPal -->
-                        <label class="payment-item">
-                            <input type="radio" name="payment_method" value="paypal" id="paymentPaypal">
-                            <div class="payment-item-content">
-                                <div class="payment-radio"></div>
-                                <div class="payment-icon">
-                                    <i class="fab fa-cc-paypal"></i>
-                                </div>
-                                <div class="payment-info">
-                                    <div class="payment-name">PayPal</div>
-                                    <div class="payment-desc">Paiement via votre compte PayPal</div>
-                                </div>
-                            </div>
-                        </label>
-                        <div id="paypalFields" class="payment-details">
+                        <!-- Détails PayPal -->
+                        <?php if($method_name === 'paypal'): ?>
+                        <div id="paypalDetails" class="payment-details <?php echo $first_method ? 'show' : ''; ?>">
                             <div class="info-note">
                                 <i class="fab fa-paypal"></i> Vous serez redirigé vers PayPal pour finaliser votre paiement.
                             </div>
                         </div>
+                        <?php endif; ?>
                         
-                        <!-- Mobile Money -->
-                        <label class="payment-item">
-                            <input type="radio" name="payment_method" value="mobile_money" id="paymentMobile">
-                            <div class="payment-item-content">
-                                <div class="payment-radio"></div>
-                                <div class="payment-icon">
-                                    <i class="fas fa-mobile-alt"></i>
-                                </div>
-                                <div class="payment-info">
-                                    <div class="payment-name">Mobile Money</div>
-                                    <div class="payment-desc">Airtel Money, Mvola, Orange Money</div>
-                                </div>
-                            </div>
-                        </label>
-                        <div id="mobileFields" class="payment-details">
-                            <div class="operator-group">
-                                <?php foreach($mobile_accounts as $account): ?>
-                                <label class="operator-option">
-                                    <input type="radio" name="mobile_operator" value="<?php echo $account['operator']; ?>">
-                                    <div class="operator-card">
-                                        <i class="fas fa-<?php echo $account['operator'] === 'airtel' ? 'tower-cell' : ($account['operator'] === 'mvola' ? 'mobile' : 'sim-card'); ?>"></i>
-                                        <span><?php echo $account['operator_name']; ?></span>
+                        <!-- Détails Mobile Money -->
+                        <?php if($method_name === 'mobile_money'): ?>
+                        <div id="mobileDetails" class="payment-details <?php echo $first_method ? 'show' : ''; ?>">
+                            <?php if(count($mobile_accounts) > 0): ?>
+                            <div class="operator-group" id="operatorGroup">
+                                <?php foreach($mobile_accounts as $acc): 
+                                    $logo_path = $operator_logos[$acc['operator']] ?? 'assets/pixels/default-logo.png';
+                                ?>
+                                <div class="operator-card" data-op="<?php echo $acc['operator']; ?>" data-phone="<?php echo $acc['phone_number']; ?>">
+                                    <div class="operator-logo">
+                                        <img src="<?php echo $logo_path; ?>" alt="<?php echo $acc['operator_name']; ?>" onerror="this.style.display='none'; this.parentElement.innerHTML='<i class=\'fas fa-mobile-alt\' style=\'font-size: 2rem;\'></i>'">
                                     </div>
-                                </label>
-                                <?php endforeach; ?>
-                            </div>
-                            
-                            <div id="mobileInfoContainer" class="mobile-info" style="display: none;">
-                                <?php foreach($mobile_accounts as $account): ?>
-                                <div class="operator-detail" data-operator="<?php echo $account['operator']; ?>" style="display: none;">
-                                    <p><strong>📱 Instructions de paiement :</strong></p>
-                                    <ol>
-                                        <li>Composez le code USSD de votre opérateur</li>
-                                        <li>Sélectionnez "Transfert d'argent"</li>
-                                        <li>Entrez le numéro : <strong class="shop-number"><?php echo $account['phone_number']; ?></strong></li>
-                                        <li>Entrez le montant : <strong><?php echo formatPrice($total); ?></strong></li>
-                                        <li>Confirmez la transaction avec votre code secret</li>
-                                    </ol>
-                                    <div class="warning-note">
-                                        <i class="fas fa-info-circle"></i> Conservez précieusement le numéro de transaction reçu par SMS
-                                    </div>
+                                    <span><?php echo $acc['operator_name']; ?></span>
                                 </div>
                                 <?php endforeach; ?>
                             </div>
+                            <input type="hidden" name="mobile_operator" id="selectedOperator">
+                            <input type="hidden" name="mobile_shop_phone" id="selectedOperatorPhone">
                             
+                            <div id="mobileInfo" class="mobile-info" style="display: none;"></div>
+                            
+                            <!-- Numéro de téléphone de l'expéditeur (CELUI QUI ENVOIE L'ARGENT) -->
                             <div class="form-group">
-                                <label>Numéro de transaction (reçu par SMS)</label>
+                                <label>Votre numéro de téléphone (expéditeur) *</label>
+                                <input type="tel" name="sender_phone" id="senderPhone" placeholder="Ex: 77 123 45 67" value="<?php echo clean($user['phone']); ?>">
+                                <small style="font-size: 0.7rem; color: #a0a0b0;">Le numéro que vous utilisez pour effectuer le paiement Mobile Money</small>
+                            </div>
+                            
+                            <!-- Numéro de transaction reçu par SMS -->
+                            <div class="form-group">
+                                <label>Numéro de transaction (reçu par SMS) *</label>
                                 <input type="text" name="mobile_transaction_id" id="mobileTransactionId" placeholder="Ex: TRX-123456789">
+                                <small style="font-size: 0.7rem; color: #a0a0b0;">Le numéro de transaction reçu par SMS après votre paiement</small>
                             </div>
+                            
+                            <div class="warning-note">
+                                <i class="fas fa-info-circle"></i> Important : Conservez le SMS de confirmation. Votre commande sera validée après vérification par notre équipe.
+                            </div>
+                            <?php else: ?>
+                            <div class="info-note" style="background: rgba(239,68,68,0.1); color: #ef4444;">
+                                <i class="fas fa-exclamation-triangle"></i> Aucun opérateur Mobile Money configuré.
+                            </div>
+                            <?php endif; ?>
                         </div>
+                        <?php endif; ?>
                         
-                        <!-- Cash à la livraison -->
-                        <label class="payment-item">
-                            <input type="radio" name="payment_method" value="cash" id="paymentCash" checked>
-                            <div class="payment-item-content">
-                                <div class="payment-radio"></div>
-                                <div class="payment-icon">
-                                    <i class="fas fa-money-bill-wave"></i>
-                                </div>
-                                <div class="payment-info">
-                                    <div class="payment-name">Paiement à la livraison</div>
-                                    <div class="payment-desc">Payez en espèces à la réception</div>
-                                </div>
-                            </div>
-                        </label>
-                        <div id="cashFields" class="payment-details">
+                        <!-- Détails Cash -->
+                        <?php if($method_name === 'cash'): ?>
+                        <div id="cashDetails" class="payment-details <?php echo $first_method ? 'show' : ''; ?>">
                             <div class="info-note" style="background: rgba(16,185,129,0.1); color: #10b981;">
                                 <i class="fas fa-check-circle"></i> Vous payez directement au livreur lors de la réception de votre commande.
                             </div>
                         </div>
+                        <?php endif; ?>
+                        
+                        <?php 
+                        $first_method = false;
+                        endforeach; 
+                        ?>
                     </div>
+                    
+                    <input type="hidden" name="payment_method" id="selectedPaymentMethod" value="<?php echo $active_payment_methods[0]['name'] ?? 'cash'; ?>">
                     
                     <!-- Instructions livreur -->
                     <div class="form-group" style="margin-top: 20px;">
                         <label><i class="fas fa-pencil-alt"></i> Instructions pour le livreur</label>
-                        <textarea name="notes" id="deliveryNotes" rows="2" placeholder="Code interphone, étage, sonnette..."></textarea>
+                        <textarea name="notes" rows="2" placeholder="Code interphone, étage, sonnette..."></textarea>
                     </div>
                 </div>
                 
-                <!-- Boutons -->
-                <div class="form-actions">
-                    <button type="submit" class="btn-submit" id="submitBtn">
-                        <i class="fas fa-check-circle"></i> Confirmer la commande
-                        <span>(<?php echo formatPrice($total); ?>)</span>
-                    </button>
-                    <a href="cart.php" class="btn-back">
-                        <i class="fas fa-arrow-left"></i> Retour au panier
-                    </a>
-                </div>
-                
-                <!-- Champs cachés pour l'adresse (seront remplis par JS) -->
-                <input type="hidden" name="address" id="finalAddress">
-                <input type="hidden" name="postal_code" id="finalZip">
-                <input type="hidden" name="city" id="finalCity">
-                <input type="hidden" name="country" id="finalCountry">
-                
+                <button type="submit" class="btn-submit" id="submitBtn">
+                    <i class="fas fa-check-circle"></i> Confirmer la commande
+                    <span>(<?php echo formatPrice($total); ?>)</span>
+                </button>
+                <a href="cart.php" class="btn-back">
+                    <i class="fas fa-arrow-left"></i> Retour au panier
+                </a>
             </form>
         </div>
         
-        <!-- Résumé commande -->
+        <!-- RÉSUMÉ -->
         <div class="order-summary">
             <div class="summary-title">
                 <i class="fas fa-receipt"></i>
                 <span>Récapitulatif</span>
             </div>
-            
-            <div class="items-list">
-                <?php foreach($cart_items as $item): ?>
-                <div class="summary-item">
-                    <div>
-                        <span class="item-name"><?php echo clean($item['name']); ?></span>
-                        <span class="item-qty">x<?php echo $item['quantity']; ?></span>
-                    </div>
-                    <div class="item-price"><?php echo formatPrice($item['price'] * $item['quantity']); ?></div>
+            <?php foreach($cart_items as $item): ?>
+            <div class="summary-item">
+                <div>
+                    <span class="item-name"><?php echo clean($item['name']); ?></span>
+                    <span class="item-qty" style="font-size: 0.7rem; color: #a0a0b0;">x<?php echo $item['quantity']; ?></span>
                 </div>
-                <?php endforeach; ?>
+                <div class="item-price" style="color: #c14432;"><?php echo formatPrice($item['price'] * $item['quantity']); ?></div>
             </div>
-            
+            <?php endforeach; ?>
             <div class="summary-divider"></div>
-            
             <div class="summary-line">
                 <span>Sous-total</span>
                 <span><?php echo formatPrice($subtotal); ?></span>
@@ -876,8 +669,7 @@ $user = $stmt->fetch();
                 <span>Total</span>
                 <strong><?php echo formatPrice($total); ?></strong>
             </div>
-            
-            <div class="secure-badge">
+            <div class="secure-badge" style="margin-top: 20px; padding: 12px; background: rgba(16,185,129,0.1); border-radius: 12px; text-align: center; font-size: 0.75rem; color: #10b981;">
                 <i class="fas fa-lock"></i> Paiement 100% sécurisé
             </div>
         </div>
@@ -886,321 +678,260 @@ $user = $stmt->fetch();
 
 <script>
 // ============================================
-// CHECKOUT.JS - VERSION FINALE CORRIGÉE
+// CHECKOUT.JS - GPS ET MOBILE MONEY
 // ============================================
 
-// === 1. GESTION DES ONGLETS ADRESSE ===
-const autoRadio = document.getElementById('autoAddressRadio');
-const manualRadio = document.getElementById('manualAddressRadio');
-const autoPanel = document.getElementById('autoPanel');
+// 1. GESTION ADRESSE (GPS vs Manuel)
+const gpsBtn = document.querySelector('.address-btn[data-type="gps"]');
+const manualAddrBtn = document.querySelector('.address-btn[data-type="manual"]');
+const gpsPanel = document.getElementById('gpsPanel');
 const manualPanel = document.getElementById('manualPanel');
 
-function toggleAddressPanel() {
-    if (autoRadio.checked) {
-        autoPanel.classList.add('active');
+function setActiveAddress(type) {
+    gpsBtn.classList.remove('active');
+    manualAddrBtn.classList.remove('active');
+    if (type === 'gps') {
+        gpsBtn.classList.add('active');
+        gpsPanel.classList.add('active');
         manualPanel.classList.remove('active');
     } else {
-        autoPanel.classList.remove('active');
+        manualAddrBtn.classList.add('active');
         manualPanel.classList.add('active');
+        gpsPanel.classList.remove('active');
     }
 }
 
-if (autoRadio && manualRadio) {
-    autoRadio.addEventListener('change', toggleAddressPanel);
-    manualRadio.addEventListener('change', toggleAddressPanel);
-    toggleAddressPanel();
-}
+if(gpsBtn) gpsBtn.addEventListener('click', () => setActiveAddress('gps'));
+if(manualAddrBtn) manualAddrBtn.addEventListener('click', () => setActiveAddress('manual'));
 
-// === 2. GESTION DES MOYENS DE PAIEMENT ===
-const paymentCard = document.getElementById('paymentCard');
-const paymentPaypal = document.getElementById('paymentPaypal');
-const paymentMobile = document.getElementById('paymentMobile');
-const paymentCash = document.getElementById('paymentCash');
-const cardFields = document.getElementById('cardFields');
-const paypalFields = document.getElementById('paypalFields');
-const mobileFields = document.getElementById('mobileFields');
-const cashFields = document.getElementById('cashFields');
+// 2. GESTION PAIEMENT
+const paymentItems = document.querySelectorAll('.payment-item');
+const paymentDetails = {
+    credit_card: document.getElementById('cardDetails'),
+    paypal: document.getElementById('paypalDetails'),
+    mobile_money: document.getElementById('mobileDetails'),
+    cash: document.getElementById('cashDetails')
+};
 
-function hideAllPaymentDetails() {
-    if (cardFields) cardFields.classList.remove('active');
-    if (paypalFields) paypalFields.classList.remove('active');
-    if (mobileFields) mobileFields.classList.remove('active');
-    if (cashFields) cashFields.classList.remove('active');
-}
-
-function togglePaymentDetails() {
-    hideAllPaymentDetails();
-    
-    if (paymentCard.checked && cardFields) {
-        cardFields.classList.add('active');
-    } else if (paymentPaypal.checked && paypalFields) {
-        paypalFields.classList.add('active');
-    } else if (paymentMobile.checked && mobileFields) {
-        mobileFields.classList.add('active');
-    } else if (paymentCash.checked && cashFields) {
-        cashFields.classList.add('active');
-    }
-}
-
-if (paymentCard) paymentCard.addEventListener('change', togglePaymentDetails);
-if (paymentPaypal) paymentPaypal.addEventListener('change', togglePaymentDetails);
-if (paymentMobile) paymentMobile.addEventListener('change', togglePaymentDetails);
-if (paymentCash) paymentCash.addEventListener('change', togglePaymentDetails);
-togglePaymentDetails();
-
-// === 3. GESTION MOBILE MONEY ===
-const operatorRadios = document.querySelectorAll('input[name="mobile_operator"]');
-const operatorDetails = document.querySelectorAll('.operator-detail');
-const mobileInfoContainer = document.getElementById('mobileInfoContainer');
-
-function toggleMobileOperatorInfo() {
-    const selected = document.querySelector('input[name="mobile_operator"]:checked');
-    
-    if (!selected) {
-        if (mobileInfoContainer) mobileInfoContainer.style.display = 'none';
-        return;
-    }
-    
-    const operator = selected.value;
-    
-    operatorDetails.forEach(detail => {
-        detail.style.display = 'none';
+function setActivePayment(method) {
+    paymentItems.forEach(item => item.classList.remove('active'));
+    Object.values(paymentDetails).forEach(detail => {
+        if(detail) detail.classList.remove('show');
     });
-    
-    const selectedDetail = document.querySelector(`.operator-detail[data-operator="${operator}"]`);
-    if (selectedDetail && mobileInfoContainer) {
-        mobileInfoContainer.style.display = 'block';
-        selectedDetail.style.display = 'block';
-    }
+    const selectedItem = document.querySelector(`.payment-item[data-method="${method}"]`);
+    if(selectedItem) selectedItem.classList.add('active');
+    if(paymentDetails[method]) paymentDetails[method].classList.add('show');
+    document.getElementById('selectedPaymentMethod').value = method;
 }
 
-operatorRadios.forEach(radio => {
-    radio.addEventListener('change', toggleMobileOperatorInfo);
+paymentItems.forEach(item => {
+    item.addEventListener('click', () => {
+        const method = item.dataset.method;
+        setActivePayment(method);
+    });
 });
-toggleMobileOperatorInfo();
 
-// === 4. FORMATAGE CARTE BANCAIRE ===
-const cardNumberInput = document.getElementById('cardNumber');
-if (cardNumberInput) {
-    cardNumberInput.addEventListener('input', function(e) {
-        let value = this.value.replace(/\s/g, '');
-        if (value.length > 16) value = value.slice(0, 16);
-        value = value.replace(/(\d{4})/g, '$1 ').trim();
-        this.value = value;
-    });
+// 3. MOBILE MONEY OPERATEURS
+const operatorCards = document.querySelectorAll('.operator-card');
+const mobileInfoDiv = document.getElementById('mobileInfo');
+const selectedOperatorInput = document.getElementById('selectedOperator');
+const selectedOperatorPhone = document.getElementById('selectedOperatorPhone');
+
+function setActiveOperator(card) {
+    const op = card.dataset.op;
+    const phone = card.dataset.phone;
+    const operatorName = card.querySelector('span')?.innerText || op;
+    
+    operatorCards.forEach(c => c.classList.remove('active'));
+    card.classList.add('active');
+    if(selectedOperatorInput) selectedOperatorInput.value = op;
+    if(selectedOperatorPhone) selectedOperatorPhone.value = phone;
+    
+    if(mobileInfoDiv) {
+        mobileInfoDiv.innerHTML = `
+            <p><strong><i class="fas fa-info-circle"></i> Instructions ${operatorName} :</strong></p>
+            <ol>
+                <li>Composez le code USSD de votre opérateur</li>
+                <li>Sélectionnez "Transfert d'argent"</li>
+                <li>Entrez le numéro marchand : <strong class="shop-number">${phone}</strong></li>
+                <li>Entrez le montant : <strong><?php echo formatPrice($total); ?></strong></li>
+                <li>Confirmez avec votre code secret</li>
+                <li>Un SMS vous sera envoyé avec un numéro de transaction</li>
+            </ol>
+            <div class="warning-note">
+                <i class="fas fa-info-circle"></i> Saisissez le numéro de transaction reçu dans le champ ci-dessous
+            </div>
+        `;
+        mobileInfoDiv.style.display = 'block';
+    }
 }
 
-const expiryInput = document.getElementById('cardExpiry');
-if (expiryInput) {
-    expiryInput.addEventListener('input', function(e) {
-        let value = this.value.replace(/\//g, '');
-        if (value.length >= 2) {
-            value = value.slice(0, 2) + '/' + value.slice(2, 4);
-        }
-        this.value = value;
-    });
-}
+operatorCards.forEach(card => {
+    card.addEventListener('click', () => setActiveOperator(card));
+});
 
-const cvvInput = document.getElementById('cardCvv');
-if (cvvInput) {
-    cvvInput.addEventListener('input', function(e) {
-        let value = this.value.replace(/\D/g, '');
-        if (value.length > 4) value = value.slice(0, 4);
-        this.value = value;
-    });
-}
-
-// === 5. GÉOLOCALISATION - CORRIGÉE ===
+// 4. GÉOLOCALISATION GPS UNIQUEMENT
 const detectBtn = document.getElementById('detectLocationBtn');
 const geoStatus = document.getElementById('geoStatus');
-const detectedAddress = document.getElementById('detectedAddress');
-const detectedPostalCode = document.getElementById('detectedPostalCode');
-const detectedCity = document.getElementById('detectedCity');
-const detectedCountry = document.getElementById('detectedCountry');
+const gpsCoordsDisplay = document.getElementById('gpsCoordsDisplay');
+const displayLat = document.getElementById('displayLat');
+const displayLng = document.getElementById('displayLng');
+const deliveryLatitude = document.getElementById('deliveryLatitude');
+const deliveryLongitude = document.getElementById('deliveryLongitude');
 
-function showGeoStatus(message, type) {
-    if (!geoStatus) return;
-    geoStatus.innerHTML = `<i class="fas ${type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle'}"></i> ${message}`;
+function showGeoStatus(msg, type) {
+    if(!geoStatus) return;
+    geoStatus.innerHTML = `<i class="fas ${type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle'}"></i> ${msg}`;
     geoStatus.className = `geo-status ${type}`;
 }
 
-async function getAddressFromCoordinates(lat, lng) {
-    try {
-        const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=fr`);
-        const data = await response.json();
-        
-        if (data && data.address) {
-            const address = data.address;
-            const road = address.road || '';
-            const houseNumber = address.house_number || '';
-            const fullStreet = houseNumber ? `${houseNumber} ${road}` : road;
-            const postalCode = address.postcode || '';
-            const city = address.city || address.town || address.village || '';
-            const country = address.country || 'France';
-            
-            // Stocker dans les champs cachés
-            if (detectedAddress) detectedAddress.value = fullStreet;
-            if (detectedPostalCode) detectedPostalCode.value = postalCode;
-            if (detectedCity) detectedCity.value = city;
-            if (detectedCountry) detectedCountry.value = country;
-            
-            showGeoStatus(`✅ Adresse détectée : ${fullStreet}, ${postalCode} ${city}`, 'success');
-        } else {
-            showGeoStatus('❌ Impossible de trouver l\'adresse', 'error');
-        }
-    } catch (error) {
-        console.error('Erreur:', error);
-        showGeoStatus('❌ Erreur lors de la récupération', 'error');
-    } finally {
-        if (detectBtn) {
-            detectBtn.disabled = false;
-            detectBtn.innerHTML = '<i class="fas fa-location-dot"></i> Détecter ma position';
-        }
-    }
-}
-
-function detectLocation() {
-    if (!navigator.geolocation) {
-        showGeoStatus('❌ La géolocalisation n\'est pas supportée', 'error');
+function detectGPSLocation() {
+    if(!navigator.geolocation) {
+        showGeoStatus('❌ GPS non supporté par votre navigateur', 'error');
         return;
     }
     
-    if (detectBtn) {
+    if(detectBtn) {
         detectBtn.disabled = true;
-        detectBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Détection...';
+        detectBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Recherche GPS...';
     }
-    showGeoStatus('📍 Recherche de votre position...', 'info');
+    showGeoStatus('📍 Recherche de votre position GPS...', 'info');
     
     navigator.geolocation.getCurrentPosition(
-        async (position) => {
-            await getAddressFromCoordinates(position.coords.latitude, position.coords.longitude);
+        position => {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            
+            // Stocker les coordonnées
+            if(deliveryLatitude) deliveryLatitude.value = lat;
+            if(deliveryLongitude) deliveryLongitude.value = lng;
+            
+            // Afficher les coordonnées
+            if(displayLat) displayLat.innerHTML = `Latitude : <strong>${lat.toFixed(6)}</strong>`;
+            if(displayLng) displayLng.innerHTML = `Longitude : <strong>${lng.toFixed(6)}</strong>`;
+            if(gpsCoordsDisplay) gpsCoordsDisplay.style.display = 'block';
+            
+            showGeoStatus(`✅ Coordonnées GPS enregistrées avec précision`, 'success');
         },
-        (error) => {
-            if (detectBtn) {
+        error => {
+            if(detectBtn) {
                 detectBtn.disabled = false;
-                detectBtn.innerHTML = '<i class="fas fa-location-dot"></i> Détecter ma position';
+                detectBtn.innerHTML = '<i class="fas fa-map-pin"></i> Me localiser (GPS)';
             }
             
-            let errorMsg = '❌ Géolocalisation refusée';
-            if (error.code === error.PERMISSION_DENIED) {
-                errorMsg = '❌ Vous avez refusé la géolocalisation';
-            } else if (error.code === error.TIMEOUT) {
-                errorMsg = '❌ Délai dépassé';
+            let errorMsg = '❌ Impossible de vous localiser';
+            if(error.code === error.PERMISSION_DENIED) {
+                errorMsg = '❌ Vous avez refusé l\'accès GPS. Veuillez saisir une adresse manuelle.';
+            } else if(error.code === error.TIMEOUT) {
+                errorMsg = '❌ Délai dépassé. Vérifiez votre connexion GPS.';
             }
             showGeoStatus(errorMsg, 'error');
         },
-        { enableHighAccuracy: true, timeout: 10000 }
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
 }
 
-if (detectBtn) {
-    detectBtn.addEventListener('click', detectLocation);
+if(detectBtn) detectBtn.addEventListener('click', detectGPSLocation);
+
+// 5. FORMATAGE CARTE BANCAIRE
+const cardNumber = document.getElementById('cardNumber');
+if(cardNumber) {
+    cardNumber.addEventListener('input', function() {
+        let v = this.value.replace(/\s/g, '');
+        if(v.length > 16) v = v.slice(0,16);
+        v = v.replace(/(\d{4})/g, '$1 ').trim();
+        this.value = v;
+    });
 }
 
-// === 6. SOUMISSION DU FORMULAIRE - CORRIGÉE ===
-document.getElementById('checkoutForm')?.addEventListener('submit', function(e) {
-    const addressType = document.querySelector('input[name="address_type"]:checked').value;
-    
+const cardExpiry = document.getElementById('cardExpiry');
+if(cardExpiry) {
+    cardExpiry.addEventListener('input', function() {
+        let v = this.value.replace('/', '');
+        if(v.length >= 2) v = v.slice(0,2) + '/' + v.slice(2,4);
+        this.value = v;
+    });
+}
+
+// 6. SOUMISSION
+document.getElementById('checkoutForm').addEventListener('submit', function(e) {
+    const addressType = gpsBtn && gpsBtn.classList.contains('active') ? 'gps' : 'manual';
     const finalAddress = document.getElementById('finalAddress');
     const finalZip = document.getElementById('finalZip');
     const finalCity = document.getElementById('finalCity');
     const finalCountry = document.getElementById('finalCountry');
     
-    if (addressType === 'auto') {
-        // Récupérer l'adresse depuis les champs cachés de géolocalisation
-        const autoAddr = detectedAddress ? detectedAddress.value : '';
-        const autoZip = detectedPostalCode ? detectedPostalCode.value : '';
-        const autoCity = detectedCity ? detectedCity.value : '';
-        const autoCountry = detectedCountry ? detectedCountry.value : 'France';
-        
-        if (!autoAddr) {
+    if(addressType === 'gps') {
+        const lat = deliveryLatitude ? deliveryLatitude.value : '';
+        const lng = deliveryLongitude ? deliveryLongitude.value : '';
+        if(!lat || !lng) {
             e.preventDefault();
-            showGeoStatus('❌ Veuillez d\'abord détecter votre position', 'error');
+            showGeoStatus('❌ Veuillez d\'abord activer votre GPS', 'error');
             return;
         }
-        
-        finalAddress.value = autoAddr;
-        finalZip.value = autoZip;
-        finalCity.value = autoCity;
-        finalCountry.value = autoCountry;
-        
+        finalAddress.value = `GPS: ${lat}, ${lng}`;
+        finalZip.value = '';
+        finalCity.value = '';
+        finalCountry.value = 'GPS';
     } else {
-        // Saisie manuelle
-        const manualAddress = document.getElementById('manualAddress')?.value;
-        const manualZip = document.getElementById('manualZip')?.value;
-        const manualCity = document.getElementById('manualCity')?.value;
-        const manualCountry = document.getElementById('manualCountry')?.value;
-        
-        if (!manualAddress) {
+        const manualAddr = document.getElementById('manualAddress');
+        if(!manualAddr || !manualAddr.value) {
             e.preventDefault();
             showGeoStatus('❌ Veuillez saisir votre adresse', 'error');
             return;
         }
-        
-        finalAddress.value = manualAddress;
-        finalZip.value = manualZip || '';
-        finalCity.value = manualCity || '';
-        finalCountry.value = manualCountry || 'France';
-    }
-    
-    // Validation téléphone
-    const phoneInput = document.getElementById('phoneNumber');
-    if (phoneInput && phoneInput.value) {
-        let phone = phoneInput.value.replace(/\D/g, '');
-        if (phone.length > 0 && phone.length < 8) {
-            e.preventDefault();
-            showGeoStatus('❌ Numéro de téléphone invalide', 'error');
-            return;
-        }
+        finalAddress.value = manualAddr.value;
+        finalZip.value = document.getElementById('manualZip')?.value || '';
+        finalCity.value = document.getElementById('manualCity')?.value || '';
+        finalCountry.value = document.getElementById('manualCountry')?.value || 'France';
     }
     
     // Validation Mobile Money
-    if (paymentMobile && paymentMobile.checked) {
-        const operator = document.querySelector('input[name="mobile_operator"]:checked');
-        if (!operator) {
+    const paymentMethod = document.getElementById('selectedPaymentMethod')?.value;
+    if(paymentMethod === 'mobile_money') {
+        const op = selectedOperatorInput ? selectedOperatorInput.value : '';
+        if(!op) {
             e.preventDefault();
             showGeoStatus('❌ Veuillez sélectionner un opérateur Mobile Money', 'error');
             return;
         }
-        const transactionId = document.getElementById('mobileTransactionId')?.value;
-        if (!transactionId) {
+        
+        const senderPhone = document.getElementById('senderPhone')?.value;
+        if(!senderPhone || senderPhone.replace(/\D/g, '').length < 8) {
             e.preventDefault();
-            showGeoStatus('❌ Veuillez saisir votre numéro de transaction', 'error');
+            showGeoStatus('❌ Veuillez saisir votre numéro de téléphone (expéditeur)', 'error');
+            return;
+        }
+        
+        const transId = document.getElementById('mobileTransactionId')?.value;
+        if(!transId) {
+            e.preventDefault();
+            showGeoStatus('❌ Veuillez saisir le numéro de transaction reçu par SMS', 'error');
             return;
         }
     }
     
     // Validation carte bancaire
-    if (paymentCard && paymentCard.checked) {
-        const cardNumber = document.getElementById('cardNumber')?.value.replace(/\s/g, '');
-        const cardExpiry = document.getElementById('cardExpiry')?.value;
-        const cardCvv = document.getElementById('cardCvv')?.value;
-        
-        if (!cardNumber || cardNumber.length < 13) {
+    if(paymentMethod === 'credit_card') {
+        const num = document.getElementById('cardNumber')?.value.replace(/\s/g, '');
+        const exp = document.getElementById('cardExpiry')?.value;
+        const cvv = document.getElementById('cardCvv')?.value;
+        if(!num || num.length < 13) {
             e.preventDefault();
             showGeoStatus('❌ Numéro de carte invalide', 'error');
             return;
         }
-        if (!cardExpiry || cardExpiry.length < 5) {
+        if(!exp || exp.length < 5) {
             e.preventDefault();
             showGeoStatus('❌ Date d\'expiration invalide', 'error');
             return;
         }
-        if (!cardCvv || cardCvv.length < 3) {
+        if(!cvv || cvv.length < 3) {
             e.preventDefault();
             showGeoStatus('❌ CVV invalide', 'error');
             return;
         }
     }
-    
-    // Debug
-    console.log('=== SOUMISSION COMMANDE ===');
-    console.log('Type adresse:', addressType);
-    console.log('Adresse:', finalAddress.value);
-    console.log('Code postal:', finalZip.value);
-    console.log('Ville:', finalCity.value);
-    console.log('Pays:', finalCountry.value);
-    console.log('Mode paiement:', document.querySelector('input[name="payment_method"]:checked')?.value);
 });
 </script>
 
