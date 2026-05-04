@@ -1,18 +1,32 @@
 <?php
-// index.php - Page d'accueil (CORRIGÉ avec boutons fonctionnels)
+// index.php - Page d'accueil avec images des produits
 require_once 'config/database.php';
 require_once 'includes/header.php';
 require_once 'includes/functions.php';
 
 $conn = getConnection();
 
-// Récupérer les produits en vedette
-$stmt = $conn->prepare("SELECT * FROM products WHERE is_featured = 1 AND is_active = 1 ORDER BY created_at DESC LIMIT 8");
+// Récupérer les produits en vedette avec leurs images
+$stmt = $conn->prepare("
+    SELECT p.*, 
+           (SELECT image_path FROM product_images WHERE product_id = p.id AND is_primary = 1 LIMIT 1) as primary_image
+    FROM products p 
+    WHERE p.is_featured = 1 AND p.is_active = 1 
+    ORDER BY p.created_at DESC 
+    LIMIT 8
+");
 $stmt->execute();
 $featured_products = $stmt->fetchAll();
 
-// Récupérer les nouveaux produits
-$stmt = $conn->prepare("SELECT * FROM products WHERE is_active = 1 ORDER BY created_at DESC LIMIT 8");
+// Récupérer les nouveaux produits avec leurs images
+$stmt = $conn->prepare("
+    SELECT p.*, 
+           (SELECT image_path FROM product_images WHERE product_id = p.id AND is_primary = 1 LIMIT 1) as primary_image
+    FROM products p 
+    WHERE p.is_active = 1 
+    ORDER BY p.created_at DESC 
+    LIMIT 8
+");
 $stmt->execute();
 $new_products = $stmt->fetchAll();
 
@@ -81,11 +95,27 @@ if (isLoggedIn()) {
                 <div class="product-badge">-<?php echo round((1 - $product['price']/$product['compare_price']) * 100); ?>%</div>
                 <?php endif; ?>
                 <div class="product-image">
-                    <i class="fas fa-box-open"></i>
+                    <?php if(!empty($product['primary_image']) && file_exists('uploads/products/' . $product['primary_image'])): ?>
+                        <img src="uploads/products/<?php echo $product['primary_image']; ?>" alt="<?php echo clean($product['name']); ?>">
+                    <?php elseif(!empty($product['image']) && file_exists('uploads/products/' . $product['image'])): ?>
+                        <img src="uploads/products/<?php echo $product['image']; ?>" alt="<?php echo clean($product['name']); ?>">
+                    <?php else: ?>
+                        <i class="fas fa-box-open"></i>
+                    <?php endif; ?>
+                    <?php if($product['stock'] > 0 && $product['stock'] < 5): ?>
+                    <div class="stock-badge">Plus que <?php echo $product['stock']; ?></div>
+                    <?php elseif($product['stock'] <= 0): ?>
+                    <div class="stock-badge out">Rupture</div>
+                    <?php endif; ?>
                 </div>
                 <div class="product-info">
                     <h3><?php echo clean($product['name']); ?></h3>
-                    <div class="product-price"><?php echo formatPrice($product['price']); ?></div>
+                    <div class="product-price">
+                        <?php echo formatPrice($product['price']); ?>
+                        <?php if($product['compare_price'] && $product['compare_price'] > $product['price']): ?>
+                        <span class="old-price"><?php echo formatPrice($product['compare_price']); ?></span>
+                        <?php endif; ?>
+                    </div>
                     <div class="product-actions">
                         <a href="product.php?id=<?php echo $product['id']; ?>" class="btn-secondary btn-sm">Voir</a>
                         <?php if($product['stock'] > 0): ?>
@@ -118,7 +148,18 @@ if (isLoggedIn()) {
             <?php foreach($new_products as $product): ?>
             <div class="product-card" data-product-id="<?php echo $product['id']; ?>">
                 <div class="product-image">
-                    <i class="fas fa-box-open"></i>
+                    <?php if(!empty($product['primary_image']) && file_exists('uploads/products/' . $product['primary_image'])): ?>
+                        <img src="uploads/products/<?php echo $product['primary_image']; ?>" alt="<?php echo clean($product['name']); ?>">
+                    <?php elseif(!empty($product['image']) && file_exists('uploads/products/' . $product['image'])): ?>
+                        <img src="uploads/products/<?php echo $product['image']; ?>" alt="<?php echo clean($product['name']); ?>">
+                    <?php else: ?>
+                        <i class="fas fa-box-open"></i>
+                    <?php endif; ?>
+                    <?php if($product['stock'] > 0 && $product['stock'] < 5): ?>
+                    <div class="stock-badge">Plus que <?php echo $product['stock']; ?></div>
+                    <?php elseif($product['stock'] <= 0): ?>
+                    <div class="stock-badge out">Rupture</div>
+                    <?php endif; ?>
                 </div>
                 <div class="product-info">
                     <h3><?php echo clean($product['name']); ?></h3>
@@ -250,12 +291,19 @@ if (isLoggedIn()) {
 }
 
 .product-image {
-    height: 180px;
+    height: 200px;
     background: linear-gradient(135deg, var(--primary-dark), var(--primary));
     display: flex;
     align-items: center;
     justify-content: center;
     position: relative;
+    overflow: hidden;
+}
+
+.product-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 
 .product-image i {
@@ -273,6 +321,24 @@ if (isLoggedIn()) {
     border-radius: 20px;
     font-size: 0.7rem;
     font-weight: 600;
+    z-index: 2;
+}
+
+.stock-badge {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    background: rgba(0,0,0,0.7);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    z-index: 2;
+    color: var(--warning);
+}
+
+.stock-badge.out {
+    color: var(--error);
 }
 
 .product-info {
@@ -294,14 +360,20 @@ if (isLoggedIn()) {
     margin-bottom: 12px;
 }
 
+.old-price {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-decoration: line-through;
+    margin-left: 8px;
+}
+
 .product-actions {
     display: flex;
     gap: 8px;
     align-items: center;
 }
 
-.product-actions .btn-sm {
-    flex: 1;
+.btn-sm {
     padding: 8px 12px;
     font-size: 0.8rem;
 }
@@ -363,14 +435,6 @@ if (isLoggedIn()) {
         gap: 16px;
     }
     
-    .product-info h3 {
-        font-size: 0.85rem;
-    }
-    
-    .product-price {
-        font-size: 1rem;
-    }
-    
     .product-actions {
         flex-direction: column;
     }
@@ -390,14 +454,12 @@ if (isLoggedIn()) {
 <script>
 // Attacher les événements après chargement
 document.addEventListener('DOMContentLoaded', function() {
-    // Boutons d'ajout au panier
     const addButtons = document.querySelectorAll('.add-to-cart-btn');
     addButtons.forEach(btn => {
         btn.removeEventListener('click', handleIndexAddToCart);
         btn.addEventListener('click', handleIndexAddToCart);
     });
     
-    // Boutons wishlist
     const wishlistButtons = document.querySelectorAll('.wishlist-btn-sm');
     wishlistButtons.forEach(btn => {
         btn.removeEventListener('click', handleIndexWishlist);
@@ -405,7 +467,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-// Fonction d'ajout au panier pour index.php
+// Fonction d'ajout au panier
 async function handleIndexAddToCart(e) {
     e.preventDefault();
     e.stopPropagation();
@@ -434,7 +496,6 @@ async function handleIndexAddToCart(e) {
         if (result.success) {
             button.innerHTML = '<i class="fas fa-check"></i> Ajouté !';
             
-            // Mettre à jour le badge
             const cartBadge = document.querySelector('.nav-cart .badge');
             if (cartBadge) {
                 cartBadge.textContent = result.cart_count;
@@ -459,7 +520,7 @@ async function handleIndexAddToCart(e) {
     }
 }
 
-// Fonction wishlist pour index.php
+// Fonction wishlist
 async function handleIndexWishlist(e) {
     e.preventDefault();
     e.stopPropagation();
@@ -500,13 +561,17 @@ async function handleIndexWishlist(e) {
             const wishlistBadge = document.querySelector('.nav-wishlist .badge');
             if (wishlistBadge && result.wishlist_count > 0) {
                 wishlistBadge.textContent = result.wishlist_count;
-            } else if (wishlistBadge) {
+                wishlistBadge.style.display = 'inline-flex';
+            } else if (wishlistBadge && result.wishlist_count === 0) {
                 wishlistBadge.style.display = 'none';
             }
+        } else {
+            button.innerHTML = originalIcon;
+            showIndexNotification('Erreur', 'error');
         }
     } catch (error) {
         button.innerHTML = originalIcon;
-        showIndexNotification('Erreur', 'error');
+        showIndexNotification('Erreur de connexion', 'error');
     } finally {
         button.disabled = false;
     }
