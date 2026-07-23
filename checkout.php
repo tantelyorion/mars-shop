@@ -1,5 +1,5 @@
 <?php
-// checkout.php - Version avec géolocalisation GPS et Mobile Money complet
+// checkout.php - Version avec géolocalisation GPS, paiement CB et PayPal
 require_once 'config/database.php';
 require_once 'includes/header.php';
 require_once 'includes/functions.php';
@@ -30,17 +30,20 @@ foreach ($cart_items as $item) {
 }
 $total = $subtotal;
 
-// Récupérer les méthodes de paiement ACTIVES
-$stmt = $conn->prepare("SELECT * FROM payment_methods WHERE is_active = 1 ORDER BY sort_order");
+// Récupérer les méthodes de paiement ACTIVES (uniquement CB et PayPal)
+$stmt = $conn->prepare("SELECT * FROM payment_methods WHERE is_active = 1 AND name IN ('credit_card', 'paypal') ORDER BY sort_order");
 $stmt->execute();
 $active_payment_methods = $stmt->fetchAll();
 
-// Récupérer les comptes Mobile Money actifs
-$stmt = $conn->prepare("SELECT * FROM mobile_money_accounts WHERE is_active = 1");
-$stmt->execute();
-$mobile_accounts = $stmt->fetchAll();
+// Si aucune méthode active, on crée des méthodes par défaut
+if (empty($active_payment_methods)) {
+    $active_payment_methods = [
+        ['name' => 'credit_card', 'display_name' => 'Carte bancaire', 'description' => 'Visa, Mastercard (paiement sécurisé)'],
+        ['name' => 'paypal', 'display_name' => 'PayPal', 'description' => 'Paiement via votre compte PayPal']
+    ];
+}
 
-// Infos utilisateur (déjà connecté)
+// Infos utilisateur
 $stmt = $conn->prepare("SELECT username, full_name, email, phone FROM users WHERE id = ?");
 $stmt->execute([$user_id]);
 $user = $stmt->fetch();
@@ -48,30 +51,17 @@ $user = $stmt->fetch();
 // Configuration des icônes
 $method_icons = [
     'credit_card' => 'fa-credit-card',
-    'paypal' => 'fa-paypal',
-    'mobile_money' => 'fa-mobile-alt',
-    'cash' => 'fa-money-bill-wave'
+    'paypal' => 'fa-paypal'
 ];
 
 $method_names = [
     'credit_card' => 'Carte bancaire',
-    'paypal' => 'PayPal',
-    'mobile_money' => 'Mobile Money',
-    'cash' => 'Paiement à la livraison'
+    'paypal' => 'PayPal'
 ];
 
 $method_descs = [
     'credit_card' => 'Visa, Mastercard (paiement sécurisé)',
-    'paypal' => 'Paiement via votre compte PayPal',
-    'mobile_money' => 'Airtel Money, Mvola, Orange Money',
-    'cash' => 'Payez en espèces à la réception'
-];
-
-// Logos des opérateurs Mobile Money
-$operator_logos = [
-    'airtel' => 'assets/pixels/airtel-logo.png',
-    'mvola' => 'assets/pixels/mvola-logo.png',
-    'orange' => 'assets/pixels/orange-money-logo.png'
+    'paypal' => 'Paiement via votre compte PayPal'
 ];
 ?>
 
@@ -284,58 +274,6 @@ $operator_logos = [
         }
         .payment-details.show { display: block; }
         
-        /* Mobile Money */
-        .operator-group {
-            display: flex;
-            gap: 16px;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
-        }
-        .operator-card {
-            flex: 1;
-            min-width: 110px;
-            background: #2a2a35;
-            border: 2px solid #3a3a45;
-            border-radius: 12px;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.2s;
-            padding: 12px;
-        }
-        .operator-card:hover { border-color: #c14432; }
-        .operator-card.active { border-color: #c14432; background: rgba(193,68,50,0.1); }
-        .operator-logo {
-            width: 50px;
-            height: 50px;
-            margin: 0 auto 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .operator-logo img {
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
-        }
-        .operator-card span { display: block; font-size: 0.8rem; font-weight: 500; }
-        
-        .mobile-info {
-            background: rgba(0,0,0,0.3);
-            border-radius: 12px;
-            padding: 16px;
-            margin: 16px 0;
-        }
-        .mobile-info ol { padding-left: 20px; margin: 10px 0; }
-        .mobile-info li { margin-bottom: 6px; font-size: 0.85rem; }
-        .shop-number { color: #c14432; font-weight: 600; font-size: 1rem; }
-        .warning-note {
-            background: rgba(245,158,11,0.1);
-            padding: 10px;
-            border-radius: 8px;
-            font-size: 0.7rem;
-            color: #f59e0b;
-            margin-top: 12px;
-        }
         .info-note {
             background: rgba(59,130,246,0.1);
             padding: 12px;
@@ -415,8 +353,6 @@ $operator_logos = [
             .order-summary { position: static; }
             .form-row { grid-template-columns: 1fr; }
             .address-options { flex-direction: column; }
-            .operator-group { flex-direction: column; }
-            .operator-card { width: 100%; }
         }
     </style>
 </head>
@@ -502,6 +438,7 @@ $operator_logos = [
                     <input type="hidden" name="postal_code" id="finalZip">
                     <input type="hidden" name="city" id="finalCity">
                     <input type="hidden" name="country" id="finalCountry">
+                    <input type="hidden" name="address_type" id="addressType" value="gps">
                 </div>
                 
                 <!-- ==================== MODE DE PAIEMENT ==================== -->
@@ -561,68 +498,13 @@ $operator_logos = [
                         </div>
                         <?php endif; ?>
                         
-                        <!-- Détails Mobile Money -->
-                        <?php if($method_name === 'mobile_money'): ?>
-                        <div id="mobileDetails" class="payment-details <?php echo $first_method ? 'show' : ''; ?>">
-                            <?php if(count($mobile_accounts) > 0): ?>
-                            <div class="operator-group" id="operatorGroup">
-                                <?php foreach($mobile_accounts as $acc): 
-                                    $logo_path = $operator_logos[$acc['operator']] ?? 'assets/pixels/default-logo.png';
-                                ?>
-                                <div class="operator-card" data-op="<?php echo $acc['operator']; ?>" data-phone="<?php echo $acc['phone_number']; ?>">
-                                    <div class="operator-logo">
-                                        <img src="<?php echo $logo_path; ?>" alt="<?php echo $acc['operator_name']; ?>" onerror="this.style.display='none'; this.parentElement.innerHTML='<i class=\'fas fa-mobile-alt\' style=\'font-size: 2rem;\'></i>'">
-                                    </div>
-                                    <span><?php echo $acc['operator_name']; ?></span>
-                                </div>
-                                <?php endforeach; ?>
-                            </div>
-                            <input type="hidden" name="mobile_operator" id="selectedOperator">
-                            <input type="hidden" name="mobile_shop_phone" id="selectedOperatorPhone">
-                            
-                            <div id="mobileInfo" class="mobile-info" style="display: none;"></div>
-                            
-                            <!-- Numéro de téléphone de l'expéditeur (CELUI QUI ENVOIE L'ARGENT) -->
-                            <div class="form-group">
-                                <label>Votre numéro de téléphone (expéditeur) *</label>
-                                <input type="tel" name="sender_phone" id="senderPhone" placeholder="Ex: 77 123 45 67" value="<?php echo clean($user['phone']); ?>">
-                                <small style="font-size: 0.7rem; color: #a0a0b0;">Le numéro que vous utilisez pour effectuer le paiement Mobile Money</small>
-                            </div>
-                            
-                            <!-- Numéro de transaction reçu par SMS -->
-                            <div class="form-group">
-                                <label>Numéro de transaction (reçu par SMS) *</label>
-                                <input type="text" name="mobile_transaction_id" id="mobileTransactionId" placeholder="Ex: TRX-123456789">
-                                <small style="font-size: 0.7rem; color: #a0a0b0;">Le numéro de transaction reçu par SMS après votre paiement</small>
-                            </div>
-                            
-                            <div class="warning-note">
-                                <i class="fas fa-info-circle"></i> Important : Conservez le SMS de confirmation. Votre commande sera validée après vérification par notre équipe.
-                            </div>
-                            <?php else: ?>
-                            <div class="info-note" style="background: rgba(239,68,68,0.1); color: #ef4444;">
-                                <i class="fas fa-exclamation-triangle"></i> Aucun opérateur Mobile Money configuré.
-                            </div>
-                            <?php endif; ?>
-                        </div>
-                        <?php endif; ?>
-                        
-                        <!-- Détails Cash -->
-                        <?php if($method_name === 'cash'): ?>
-                        <div id="cashDetails" class="payment-details <?php echo $first_method ? 'show' : ''; ?>">
-                            <div class="info-note" style="background: rgba(16,185,129,0.1); color: #10b981;">
-                                <i class="fas fa-check-circle"></i> Vous payez directement au livreur lors de la réception de votre commande.
-                            </div>
-                        </div>
-                        <?php endif; ?>
-                        
                         <?php 
                         $first_method = false;
                         endforeach; 
                         ?>
                     </div>
                     
-                    <input type="hidden" name="payment_method" id="selectedPaymentMethod" value="<?php echo $active_payment_methods[0]['name'] ?? 'cash'; ?>">
+                    <input type="hidden" name="payment_method" id="selectedPaymentMethod" value="<?php echo $active_payment_methods[0]['name'] ?? 'credit_card'; ?>">
                     
                     <!-- Instructions livreur -->
                     <div class="form-group" style="margin-top: 20px;">
@@ -678,7 +560,7 @@ $operator_logos = [
 
 <script>
 // ============================================
-// CHECKOUT.JS - GPS ET MOBILE MONEY
+// CHECKOUT.JS - GPS et Paiement CB/PayPal
 // ============================================
 
 // 1. GESTION ADRESSE (GPS vs Manuel)
@@ -686,6 +568,7 @@ const gpsBtn = document.querySelector('.address-btn[data-type="gps"]');
 const manualAddrBtn = document.querySelector('.address-btn[data-type="manual"]');
 const gpsPanel = document.getElementById('gpsPanel');
 const manualPanel = document.getElementById('manualPanel');
+const addressTypeInput = document.getElementById('addressType');
 
 function setActiveAddress(type) {
     gpsBtn.classList.remove('active');
@@ -694,10 +577,12 @@ function setActiveAddress(type) {
         gpsBtn.classList.add('active');
         gpsPanel.classList.add('active');
         manualPanel.classList.remove('active');
+        addressTypeInput.value = 'gps';
     } else {
         manualAddrBtn.classList.add('active');
         manualPanel.classList.add('active');
         gpsPanel.classList.remove('active');
+        addressTypeInput.value = 'manual';
     }
 }
 
@@ -708,9 +593,7 @@ if(manualAddrBtn) manualAddrBtn.addEventListener('click', () => setActiveAddress
 const paymentItems = document.querySelectorAll('.payment-item');
 const paymentDetails = {
     credit_card: document.getElementById('cardDetails'),
-    paypal: document.getElementById('paypalDetails'),
-    mobile_money: document.getElementById('mobileDetails'),
-    cash: document.getElementById('cashDetails')
+    paypal: document.getElementById('paypalDetails')
 };
 
 function setActivePayment(method) {
@@ -731,46 +614,7 @@ paymentItems.forEach(item => {
     });
 });
 
-// 3. MOBILE MONEY OPERATEURS
-const operatorCards = document.querySelectorAll('.operator-card');
-const mobileInfoDiv = document.getElementById('mobileInfo');
-const selectedOperatorInput = document.getElementById('selectedOperator');
-const selectedOperatorPhone = document.getElementById('selectedOperatorPhone');
-
-function setActiveOperator(card) {
-    const op = card.dataset.op;
-    const phone = card.dataset.phone;
-    const operatorName = card.querySelector('span')?.innerText || op;
-    
-    operatorCards.forEach(c => c.classList.remove('active'));
-    card.classList.add('active');
-    if(selectedOperatorInput) selectedOperatorInput.value = op;
-    if(selectedOperatorPhone) selectedOperatorPhone.value = phone;
-    
-    if(mobileInfoDiv) {
-        mobileInfoDiv.innerHTML = `
-            <p><strong><i class="fas fa-info-circle"></i> Instructions ${operatorName} :</strong></p>
-            <ol>
-                <li>Composez le code USSD de votre opérateur</li>
-                <li>Sélectionnez "Transfert d'argent"</li>
-                <li>Entrez le numéro marchand : <strong class="shop-number">${phone}</strong></li>
-                <li>Entrez le montant : <strong><?php echo formatPrice($total); ?></strong></li>
-                <li>Confirmez avec votre code secret</li>
-                <li>Un SMS vous sera envoyé avec un numéro de transaction</li>
-            </ol>
-            <div class="warning-note">
-                <i class="fas fa-info-circle"></i> Saisissez le numéro de transaction reçu dans le champ ci-dessous
-            </div>
-        `;
-        mobileInfoDiv.style.display = 'block';
-    }
-}
-
-operatorCards.forEach(card => {
-    card.addEventListener('click', () => setActiveOperator(card));
-});
-
-// 4. GÉOLOCALISATION GPS UNIQUEMENT
+// 3. GÉOLOCALISATION GPS
 const detectBtn = document.getElementById('detectLocationBtn');
 const geoStatus = document.getElementById('geoStatus');
 const gpsCoordsDisplay = document.getElementById('gpsCoordsDisplay');
@@ -802,11 +646,9 @@ function detectGPSLocation() {
             const lat = position.coords.latitude;
             const lng = position.coords.longitude;
             
-            // Stocker les coordonnées
             if(deliveryLatitude) deliveryLatitude.value = lat;
             if(deliveryLongitude) deliveryLongitude.value = lng;
             
-            // Afficher les coordonnées
             if(displayLat) displayLat.innerHTML = `Latitude : <strong>${lat.toFixed(6)}</strong>`;
             if(displayLng) displayLng.innerHTML = `Longitude : <strong>${lng.toFixed(6)}</strong>`;
             if(gpsCoordsDisplay) gpsCoordsDisplay.style.display = 'block';
@@ -833,7 +675,7 @@ function detectGPSLocation() {
 
 if(detectBtn) detectBtn.addEventListener('click', detectGPSLocation);
 
-// 5. FORMATAGE CARTE BANCAIRE
+// 4. FORMATAGE CARTE BANCAIRE
 const cardNumber = document.getElementById('cardNumber');
 if(cardNumber) {
     cardNumber.addEventListener('input', function() {
@@ -853,9 +695,9 @@ if(cardExpiry) {
     });
 }
 
-// 6. SOUMISSION
+// 5. SOUMISSION
 document.getElementById('checkoutForm').addEventListener('submit', function(e) {
-    const addressType = gpsBtn && gpsBtn.classList.contains('active') ? 'gps' : 'manual';
+    const addressType = addressTypeInput ? addressTypeInput.value : 'gps';
     const finalAddress = document.getElementById('finalAddress');
     const finalZip = document.getElementById('finalZip');
     const finalCity = document.getElementById('finalCity');
@@ -886,32 +728,8 @@ document.getElementById('checkoutForm').addEventListener('submit', function(e) {
         finalCountry.value = document.getElementById('manualCountry')?.value || 'France';
     }
     
-    // Validation Mobile Money
-    const paymentMethod = document.getElementById('selectedPaymentMethod')?.value;
-    if(paymentMethod === 'mobile_money') {
-        const op = selectedOperatorInput ? selectedOperatorInput.value : '';
-        if(!op) {
-            e.preventDefault();
-            showGeoStatus('❌ Veuillez sélectionner un opérateur Mobile Money', 'error');
-            return;
-        }
-        
-        const senderPhone = document.getElementById('senderPhone')?.value;
-        if(!senderPhone || senderPhone.replace(/\D/g, '').length < 8) {
-            e.preventDefault();
-            showGeoStatus('❌ Veuillez saisir votre numéro de téléphone (expéditeur)', 'error');
-            return;
-        }
-        
-        const transId = document.getElementById('mobileTransactionId')?.value;
-        if(!transId) {
-            e.preventDefault();
-            showGeoStatus('❌ Veuillez saisir le numéro de transaction reçu par SMS', 'error');
-            return;
-        }
-    }
-    
     // Validation carte bancaire
+    const paymentMethod = document.getElementById('selectedPaymentMethod')?.value;
     if(paymentMethod === 'credit_card') {
         const num = document.getElementById('cardNumber')?.value.replace(/\s/g, '');
         const exp = document.getElementById('cardExpiry')?.value;
@@ -932,6 +750,7 @@ document.getElementById('checkoutForm').addEventListener('submit', function(e) {
             return;
         }
     }
+    // PayPal : pas de validation côté client
 });
 </script>
 

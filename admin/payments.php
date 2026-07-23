@@ -1,60 +1,12 @@
 <?php
-// admin/payments.php - Gestion des paiements (suite)
+// admin/payments.php - Gestion des paiements (CB et PayPal uniquement)
 require_once '../config/database.php';
 require_once '../includes/functions.php';
-
 requireAdmin();
 
 $conn = getConnection();
 
-// Validation d'une transaction Mobile Money
-if (isset($_GET['verify']) && isset($_GET['id'])) {
-    $id = (int)$_GET['id'];
-    $action = $_GET['action'] ?? '';
-    
-    if ($action === 'approve') {
-        $stmt = $conn->prepare("
-            UPDATE mobile_money_transactions 
-            SET status = 'verified', verified_by = ?, verified_at = NOW() 
-            WHERE id = ?
-        ");
-        $stmt->execute([$_SESSION['user_id'], $id]);
-        
-        // Récupérer l'order_id
-        $stmt = $conn->prepare("SELECT order_id FROM mobile_money_transactions WHERE id = ?");
-        $stmt->execute([$id]);
-        $tx = $stmt->fetch();
-        
-        if ($tx) {
-            $stmt = $conn->prepare("UPDATE orders SET payment_status = 'paid', status = 'processing' WHERE id = ?");
-            $stmt->execute([$tx['order_id']]);
-            
-            $stmt = $conn->prepare("UPDATE payments SET status = 'success' WHERE order_id = ?");
-            $stmt->execute([$tx['order_id']]);
-        }
-        setFlashMessage('success', 'Transaction Mobile Money validée');
-    } elseif ($action === 'reject') {
-        $stmt = $conn->prepare("UPDATE mobile_money_transactions SET status = 'rejected', verified_by = ?, verified_at = NOW() WHERE id = ?");
-        $stmt->execute([$_SESSION['user_id'], $id]);
-        setFlashMessage('warning', 'Transaction Mobile Money rejetée');
-    }
-    header('Location: payments.php');
-    exit();
-}
-
-// Récupérer les transactions Mobile Money en attente
-$stmt = $conn->prepare("
-    SELECT mmt.*, o.order_number, u.username, u.email 
-    FROM mobile_money_transactions mmt
-    JOIN orders o ON mmt.order_id = o.id
-    JOIN users u ON mmt.user_id = u.id
-    WHERE mmt.status = 'pending'
-    ORDER BY mmt.created_at DESC
-");
-$stmt->execute();
-$pending_transactions = $stmt->fetchAll();
-
-// Récupérer tous les paiements
+// Récupérer tous les paiements (historique)
 $stmt = $conn->prepare("
     SELECT p.*, o.order_number, u.username 
     FROM payments p
@@ -73,10 +25,10 @@ $total_success = $stmt->fetch()['total'] ?? 0;
 $stmt = $conn->query("SELECT COUNT(*) as count FROM payments WHERE status = 'pending'");
 $pending_count = $stmt->fetch()['count'] ?? 0;
 
-$operators = [
-    'airtel' => 'Airtel Money',
-    'mvola' => 'Mvola',
-    'orange' => 'Orange Money'
+// Noms des méthodes de paiement
+$method_names = [
+    'credit_card' => 'Carte bancaire',
+    'paypal' => 'PayPal'
 ];
 ?>
 
@@ -124,6 +76,11 @@ $operators = [
         .page-title h1 {
             font-size: 1.5rem;
             margin-bottom: 4px;
+        }
+        
+        .page-title p {
+            color: #a0a0b0;
+            font-size: 0.85rem;
         }
         
         .stats-grid {
@@ -219,27 +176,12 @@ $operators = [
             color: white;
         }
         
-        .btn-approve {
-            background: #10b981;
-            color: white;
-            padding: 4px 12px;
-            border-radius: 6px;
-            text-decoration: none;
-            font-size: 0.75rem;
-            margin-right: 5px;
+        .text-muted {
+            color: #a0a0b0;
         }
         
-        .btn-reject {
-            background: #ef4444;
-            color: white;
-            padding: 4px 12px;
-            border-radius: 6px;
-            text-decoration: none;
-            font-size: 0.75rem;
-        }
-        
-        .pending-row {
-            background: rgba(245, 158, 11, 0.1);
+        .text-center {
+            text-align: center;
         }
         
         @media (max-width: 768px) {
@@ -263,7 +205,7 @@ $operators = [
         <div class="admin-header">
             <div class="page-title">
                 <h1>Gestion des paiements</h1>
-                <p>Suivez et validez les paiements</p>
+                <p>Suivez l'historique des paiements par carte bancaire et PayPal</p>
             </div>
             <div class="admin-user">
                 <button class="mobile-toggle" id="mobileToggle" style="background:none;border:none;color:white;font-size:1.5rem;cursor:pointer;">
@@ -284,61 +226,12 @@ $operators = [
             </div>
             <div class="stat-card">
                 <div class="stat-info">
-                    <h3>Transactions en attente</h3>
+                    <h3>Paiements en attente</h3>
                     <div class="stat-number"><?php echo $pending_count; ?></div>
                 </div>
                 <div class="stat-icon">
                     <i class="fas fa-clock"></i>
                 </div>
-            </div>
-        </div>
-        
-        <!-- Transactions Mobile Money en attente -->
-        <div class="card">
-            <div class="card-header">
-                <h3><i class="fas fa-mobile-alt"></i> Transactions Mobile Money en attente</h3>
-            </div>
-            <div class="card-body">
-                <?php if(count($pending_transactions) > 0): ?>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Date</th>
-                            <th>Commande</th>
-                            <th>Client</th>
-                            <th>Opérateur</th>
-                            <th>Montant</th>
-                            <th>ID Transaction</th>
-                            <th>Actions</th>
-                        </table>
-                    </thead>
-                    <tbody>
-                        <?php foreach($pending_transactions as $tx): ?>
-                        <tr class="pending-row">
-                            <td><?php echo date('d/m/Y H:i', strtotime($tx['created_at'])); ?></td>
-                            <td><?php echo $tx['order_number']; ?></td>
-                            <td><?php echo clean($tx['username']); ?><br><small><?php echo $tx['email']; ?></small></td>
-                            <td><?php echo $operators[$tx['operator']] ?? $tx['operator']; ?></td>
-                            <td><?php echo formatPrice($tx['amount']); ?></td>
-                            <td><code><?php echo $tx['transaction_id']; ?></code></td>
-                            <td>
-                                <a href="?verify=1&action=approve&id=<?php echo $tx['id']; ?>" class="btn-approve" onclick="return confirm('Valider cette transaction ?')">
-                                    <i class="fas fa-check"></i> Valider
-                                </a>
-                                <a href="?verify=1&action=reject&id=<?php echo $tx['id']; ?>" class="btn-reject" onclick="return confirm('Rejeter cette transaction ?')">
-                                    <i class="fas fa-times"></i> Rejeter
-                                </a>
-                            </td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-                <?php else: ?>
-                <div class="text-center text-muted" style="padding: 40px;">
-                    <i class="fas fa-check-circle" style="font-size: 3rem; margin-bottom: 16px; color: #10b981;"></i>
-                    <p>Aucune transaction en attente</p>
-                </div>
-                <?php endif; ?>
             </div>
         </div>
         
@@ -367,11 +260,14 @@ $operators = [
                             <td><?php echo date('d/m/Y H:i', strtotime($payment['created_at'])); ?></td>
                             <td><?php echo $payment['order_number']; ?></td>
                             <td><?php echo clean($payment['username']); ?></td>
-                            <td><?php echo str_replace('_', ' ', $payment['payment_method']); ?></td>
+                            <td><?php echo $method_names[$payment['payment_method']] ?? $payment['payment_method']; ?></td>
                             <td><?php echo formatPrice($payment['amount']); ?></td>
                             <td>
                                 <span class="status-badge status-<?php echo $payment['status']; ?>">
-                                    <?php echo $payment['status'] == 'success' ? 'Succès' : ($payment['status'] == 'pending' ? 'En attente' : 'Échoué'); ?>
+                                    <?php 
+                                    echo $payment['status'] == 'success' ? 'Succès' : 
+                                        ($payment['status'] == 'pending' ? 'En attente' : 'Échoué'); 
+                                    ?>
                                 </span>
                             </td>
                             <td><?php echo $payment['transaction_id']; ?></td>

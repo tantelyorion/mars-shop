@@ -1,6 +1,6 @@
 -- ============================================
 -- MARS SHOP - BASE DE DONNÉES COMPLÈTE
--- VERSION PROPR ET OPTIMISÉE
+-- VERSION PROPR ET OPTIMISÉE (SANS AMEA)
 -- ============================================
 
 -- Supprimer et recréer la base de données
@@ -9,7 +9,7 @@ CREATE DATABASE mars_shop CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE mars_shop;
 
 -- ============================================
--- TABLE users
+-- TABLE users (sans colonnes AMEA)
 -- ============================================
 CREATE TABLE users (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -22,14 +22,10 @@ CREATE TABLE users (
     avatar VARCHAR(255) DEFAULT NULL,
     role ENUM('user', 'admin') DEFAULT 'user',
     is_active BOOLEAN DEFAULT TRUE,
-    amea_id VARCHAR(255) UNIQUE DEFAULT NULL,
-    amea_avatar VARCHAR(500) DEFAULT NULL,
-    auth_provider VARCHAR(50) DEFAULT 'local',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_email (email),
-    INDEX idx_role (role),
-    INDEX idx_amea_id (amea_id)
+    INDEX idx_role (role)
 );
 
 -- ============================================
@@ -96,6 +92,8 @@ CREATE TABLE orders (
     shipping_zip VARCHAR(20),
     shipping_country VARCHAR(100) DEFAULT 'France',
     notes TEXT,
+    delivery_latitude DECIMAL(10,8) NULL,
+    delivery_longitude DECIMAL(11,8) NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -217,6 +215,78 @@ CREATE TABLE categories (
 );
 
 -- ============================================
+-- TABLE payment_methods (ajoutée)
+-- ============================================
+CREATE TABLE payment_methods (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(50) NOT NULL UNIQUE,
+    display_name VARCHAR(100) NOT NULL,
+    description TEXT,
+    logo VARCHAR(255),
+    is_active BOOLEAN DEFAULT TRUE,
+    sort_order INT DEFAULT 0,
+    settings JSON,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_active (is_active)
+);
+
+-- ============================================
+-- TABLE mobile_money_accounts
+-- ============================================
+CREATE TABLE mobile_money_accounts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    operator ENUM('airtel', 'mvola', 'orange') NOT NULL UNIQUE,
+    operator_name VARCHAR(50) NOT NULL,
+    phone_number VARCHAR(20) NOT NULL,
+    account_name VARCHAR(100),
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- ============================================
+-- TABLE mobile_money_transactions
+-- ============================================
+CREATE TABLE mobile_money_transactions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    order_id INT NOT NULL,
+    user_id INT NOT NULL,
+    operator ENUM('airtel', 'mvola', 'orange') NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    transaction_id VARCHAR(100) NOT NULL,
+    sender_phone VARCHAR(20),
+    status ENUM('pending', 'verified', 'rejected') DEFAULT 'pending',
+    admin_notes TEXT,
+    verified_by INT,
+    verified_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (verified_by) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_status (status),
+    INDEX idx_transaction_id (transaction_id),
+    UNIQUE KEY unique_transaction (transaction_id, operator)
+);
+
+-- ============================================
+-- TABLE product_images
+-- ============================================
+CREATE TABLE product_images (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    product_id INT NOT NULL,
+    image_path VARCHAR(255) NOT NULL,
+    image_alt VARCHAR(255),
+    sort_order INT DEFAULT 0,
+    is_primary BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+    INDEX idx_product (product_id),
+    INDEX idx_sort (sort_order)
+);
+
+-- ============================================
 -- INSERTION DES DONNÉES DE BASE
 -- ============================================
 
@@ -257,130 +327,152 @@ INSERT INTO coupons (code, description, discount_type, discount_value, min_order
 ('MARS20', '20€ de réduction sur votre commande', 'fixed', 20.00, 100.00, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 90 DAY), 50),
 ('MARS25', '25% sur la collection Mars', 'percentage', 25.00, 80.00, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 60 DAY), 30);
 
--- ============================================
--- COMMANDES DE TEST (CORRIGÉES)
--- ============================================
-
--- Génération des numéros de commande avec DATE_FORMAT
-SET @order_num1 = CONCAT('MARS-', DATE_FORMAT(NOW(), '%Y%m%d'), '-001');
-SET @order_num2 = CONCAT('MARS-', DATE_FORMAT(NOW(), '%Y%m%d'), '-002');
-SET @txn1 = CONCAT('TXN-MARS-', REPLACE(UUID(), '-', ''));
-SET @txn2 = CONCAT('TXN-MARS-', REPLACE(UUID(), '-', ''));
-
--- Insertion des commandes
-INSERT INTO orders (user_id, order_number, subtotal, discount, shipping_cost, tax, total_amount, status, payment_status, shipping_address) VALUES
-(2, @order_num1, 119.97, 0, 0, 23.99, 143.96, 'delivered', 'paid', '123 Rue de l\'Espace, Paris'),
-(2, @order_num2, 149.98, 0, 0, 30.00, 179.98, 'processing', 'paid', '123 Rue de l\'Espace, Paris');
-
--- Insertion des articles
-INSERT INTO order_items (order_id, product_id, product_name, quantity, price, total) VALUES
-(1, 1, 'T-Shirt Mars Rock', 2, 29.99, 59.98),
-(1, 3, 'Casquette Explorer', 2, 29.99, 59.99),
-(2, 6, 'Maquette Rover', 1, 49.99, 49.99),
-(2, 10, 'Kit Fusée Martienne', 2, 49.99, 99.99);
-
--- Insertion des paiements
-INSERT INTO payments (order_id, payment_method, card_last4, transaction_id, amount, status) VALUES
-(1, 'cash', NULL, @txn1, 143.96, 'success'),
-(2, 'papay', NULL, @txn2, 179.98, 'success');
-
--- ============================================
--- FIN DU SCRIPT
--- ============================================
-
-
--- ============================================
--- MARS SHOP - AJOUT DES TABLES POUR PAIEMENTS
--- ============================================
-
--- Table des méthodes de paiement (configurable par admin)
-CREATE TABLE payment_methods (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(50) NOT NULL UNIQUE,
-    display_name VARCHAR(100) NOT NULL,
-    description TEXT,
-    logo VARCHAR(255),
-    is_active BOOLEAN DEFAULT TRUE,
-    sort_order INT DEFAULT 0,
-    settings JSON,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_active (is_active)
-);
-
--- Table des comptes Mobile Money (configurable par admin)
-CREATE TABLE mobile_money_accounts (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    operator ENUM('airtel', 'mvola', 'orange') NOT NULL UNIQUE,
-    operator_name VARCHAR(50) NOT NULL,
-    phone_number VARCHAR(20) NOT NULL,
-    account_name VARCHAR(100),
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
-
--- Table des transactions Mobile Money (attente validation)
-CREATE TABLE mobile_money_transactions (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    order_id INT NOT NULL,
-    user_id INT NOT NULL,
-    operator ENUM('airtel', 'mvola', 'orange') NOT NULL,
-    amount DECIMAL(10,2) NOT NULL,
-    transaction_id VARCHAR(100) NOT NULL,
-    sender_phone VARCHAR(20),
-    status ENUM('pending', 'verified', 'rejected') DEFAULT 'pending',
-    admin_notes TEXT,
-    verified_by INT,
-    verified_at TIMESTAMP NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (verified_by) REFERENCES users(id) ON DELETE SET NULL,
-    INDEX idx_status (status),
-    INDEX idx_transaction_id (transaction_id),
-    UNIQUE KEY unique_transaction (transaction_id, operator)
-);
-
--- Ajouter les méthodes de paiement par défaut
+-- Méthodes de paiement
 INSERT INTO payment_methods (name, display_name, description, logo, sort_order, settings) VALUES
 ('credit_card', 'Carte bancaire', 'Paiement sécurisé par carte bancaire (Visa, Mastercard)', 'cc-visa', 1, '{"api_key": "", "enabled": true}'),
 ('paypal', 'PayPal', 'Paiement via votre compte PayPal', 'paypal', 2, '{"client_id": "", "enabled": true}'),
 ('mobile_money', 'Mobile Money', 'Paiement par Mobile Money (Airtel Money, Mvola, Orange Money)', 'mobile-alt', 3, '{"enabled": true}'),
 ('cash', 'Paiement à la livraison', 'Payez en espèces à la réception de votre commande', 'money-bill-wave', 4, '{"enabled": true}');
 
--- Ajouter les comptes Mobile Money par défaut
+-- Comptes Mobile Money
 INSERT INTO mobile_money_accounts (operator, operator_name, phone_number, account_name, is_active) VALUES
 ('airtel', 'Airtel Money', '+225 07 00 00 00 01', 'Mars Shop Airtel', TRUE),
 ('mvola', 'Mvola', '+261 34 00 000 01', 'Mars Shop Mvola', TRUE),
 ('orange', 'Orange Money', '+225 07 00 00 00 02', 'Mars Shop Orange', TRUE);
 
--- Ajouter les colonnes pour la géolocalisation dans la table orders
-ALTER TABLE orders ADD COLUMN delivery_latitude DECIMAL(10,8) NULL;
-ALTER TABLE orders ADD COLUMN delivery_longitude DECIMAL(11,8) NULL;
+-- ============================================
+-- COMMANDES DE TEST
+-- ============================================
+SET @order_num1 = CONCAT('MARS-', DATE_FORMAT(NOW(), '%Y%m%d'), '-001');
+SET @order_num2 = CONCAT('MARS-', DATE_FORMAT(NOW(), '%Y%m%d'), '-002');
+SET @txn1 = CONCAT('TXN-MARS-', REPLACE(UUID(), '-', ''));
+SET @txn2 = CONCAT('TXN-MARS-', REPLACE(UUID(), '-', ''));
 
--- Ajouter la colonne sender_phone dans mobile_money_transactions si non existante
-ALTER TABLE mobile_money_transactions ADD COLUMN sender_phone VARCHAR(20) NULL AFTER transaction_id;
+INSERT INTO orders (user_id, order_number, subtotal, discount, shipping_cost, tax, total_amount, status, payment_status, shipping_address) VALUES
+(2, @order_num1, 119.97, 0, 0, 23.99, 143.96, 'delivered', 'paid', '123 Rue de l\'Espace, Paris'),
+(2, @order_num2, 149.98, 0, 0, 30.00, 179.98, 'processing', 'paid', '123 Rue de l\'Espace, Paris');
+
+INSERT INTO order_items (order_id, product_id, product_name, quantity, price, total) VALUES
+(1, 1, 'T-Shirt Mars Rock', 2, 29.99, 59.98),
+(1, 3, 'Casquette Explorer', 2, 29.99, 59.99),
+(2, 6, 'Maquette Rover', 1, 49.99, 49.99),
+(2, 10, 'Kit Fusée Martienne', 2, 49.99, 99.99);
+
+INSERT INTO payments (order_id, payment_method, card_last4, transaction_id, amount, status) VALUES
+(1, 'cash', NULL, @txn1, 143.96, 'success'),
+(2, 'papay', NULL, @txn2, 179.98, 'success');
+
 
 -- ============================================
--- MARS SHOP - GESTION DES IMAGES PRODUITS
+-- MARS SHOP - MISE À JOUR NEPTUNE PAY
+-- Ajout des méthodes de paiement et tables nécessaires
 -- ============================================
 
--- Modifier la table products pour la gestion des images
-ALTER TABLE products MODIFY image VARCHAR(255) NULL;
-ALTER TABLE products ADD COLUMN image_alt VARCHAR(255) NULL;
+USE mars_shop;
 
--- Créer une table dédiée aux images additionnelles
-CREATE TABLE product_images (
+-- ============================================
+-- 1. AJOUTER NEPTUNE PAY DANS payment_methods
+-- ============================================
+
+-- Vérifier si Neptune Pay existe déjà
+SET @exists = (SELECT COUNT(*) FROM payment_methods WHERE name = 'neptune_pay');
+
+-- Ajouter Neptune Pay si non existant
+INSERT INTO payment_methods (name, display_name, description, logo, sort_order, settings, is_active, created_at)
+SELECT 
+    'neptune_pay',
+    'Neptune Pay',
+    'Paiement par QR code / code manuel',
+    'neptune_logo.png',
+    3,
+    '{"api_key": "", "api_secret": "", "environment": "production", "enabled": true}',
+    1,
+    NOW()
+WHERE @exists = 0;
+
+-- ============================================
+-- 2. METTRE À JOUR LES AUTRES MÉTHODES SI NÉCESSAIRE
+-- ============================================
+
+-- S'assurer que les méthodes existent
+INSERT IGNORE INTO payment_methods (name, display_name, description, logo, sort_order, settings, is_active) VALUES
+('credit_card', 'Carte bancaire', 'Visa, Mastercard (paiement sécurisé)', 'cc-visa', 1, '{"api_key": "", "enabled": true}', 1),
+('paypal', 'PayPal', 'Paiement via votre compte PayPal', 'paypal', 2, '{"client_id": "", "client_secret": "", "mode": "sandbox", "enabled": true}', 1),
+('cash', 'Paiement à la livraison', 'Payez en espèces à la réception', 'money-bill-wave', 4, '{"enabled": true}', 1),
+('mobile_money', 'Mobile Money', 'Airtel Money, Mvola, Orange Money', 'mobile-alt', 5, '{"enabled": true}', 0);
+
+-- ============================================
+-- 3. AJOUTER NEPTUNE PAY DANS payments (si besoin)
+-- ============================================
+
+-- Modifier la table payments pour accepter neptune_pay
+-- (Déjà compatible, mais on ajoute une vérification)
+ALTER TABLE payments 
+MODIFY COLUMN payment_method VARCHAR(50) NOT NULL;
+
+-- ============================================
+-- 4. TABLE NEPTUNE PAY TRANSACTIONS (optionnel)
+-- ============================================
+
+-- Cette table peut être utilisée pour stocker les transactions Neptune Pay
+CREATE TABLE IF NOT EXISTS neptune_pay_transactions (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    product_id INT NOT NULL,
-    image_path VARCHAR(255) NOT NULL,
-    image_alt VARCHAR(255),
-    sort_order INT DEFAULT 0,
-    is_primary BOOLEAN DEFAULT FALSE,
+    order_id INT NOT NULL,
+    order_number VARCHAR(50) NOT NULL,
+    payment_code VARCHAR(20) NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    currency VARCHAR(10) DEFAULT 'EUR',
+    status ENUM('pending', 'paid', 'expired', 'cancelled') DEFAULT 'pending',
+    transaction_id VARCHAR(100),
+    payer_email VARCHAR(100),
+    payer_name VARCHAR(100),
+    request_data TEXT,
+    response_data TEXT,
+    expires_at DATETIME NOT NULL,
+    paid_at DATETIME NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
-    INDEX idx_product (product_id),
-    INDEX idx_sort (sort_order)
-);
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+    INDEX idx_payment_code (payment_code),
+    INDEX idx_order_number (order_number),
+    INDEX idx_status (status),
+    INDEX idx_expires (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- 5. METTRE À JOUR LA TABLE orders
+-- ============================================
+
+-- Ajouter une colonne neptune_code si besoin
+ALTER TABLE orders 
+ADD COLUMN IF NOT EXISTS neptune_payment_code VARCHAR(20) NULL AFTER payment_status,
+ADD COLUMN IF NOT EXISTS neptune_expires_at DATETIME NULL AFTER neptune_payment_code,
+ADD INDEX idx_neptune_code (neptune_payment_code);
+
+-- ============================================
+-- 6. VÉRIFICATION DES MÉTHODES DE PAIEMENT
+-- ============================================
+
+-- Afficher toutes les méthodes de paiement
+SELECT * FROM payment_methods ORDER BY sort_order;
+
+-- ============================================
+-- 7. DONNÉES DE TEST POUR NEPTUNE PAY
+-- ============================================
+
+-- Ajouter un compte Neptune Pay de test (si vous voulez)
+INSERT INTO mobile_money_accounts (operator, operator_name, phone_number, account_name, is_active) 
+SELECT 'neptune', 'Neptune Pay', 'NEPTUNE_TEST_001', 'Mars Shop Neptune', 1
+WHERE NOT EXISTS (SELECT 1 FROM mobile_money_accounts WHERE operator = 'neptune');
+
+-- ============================================
+-- FIN DE LA MISE À JOUR
+-- ============================================
+
+-- Afficher un résumé
+SELECT '✅ Mise à jour Neptune Pay terminée' AS status;
+SELECT CONCAT('📊 ', COUNT(*), ' méthodes de paiement configurées') AS info FROM payment_methods;
+
+-- ============================================
+-- FIN DU SCRIPT
+-- ============================================

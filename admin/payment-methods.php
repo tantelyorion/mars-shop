@@ -1,5 +1,5 @@
 <?php
-// admin/payment-methods.php - Gestion des méthodes de paiement
+// admin/payment-methods.php - Gestion des méthodes de paiement (CB et PayPal)
 require_once '../config/database.php';
 require_once '../includes/functions.php';
 requireAdmin();
@@ -15,17 +15,22 @@ if (isset($_GET['toggle']) && isset($_GET['id'])) {
     exit();
 }
 
-// Mettre à jour les comptes Mobile Money
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_mobile'])) {
-    foreach ($_POST['accounts'] as $operator => $data) {
-        $stmt = $conn->prepare("
-            UPDATE mobile_money_accounts 
-            SET phone_number = ?, account_name = ?, is_active = ? 
-            WHERE operator = ?
-        ");
-        $stmt->execute([$data['phone'], $data['name'], $data['active'] ?? 0, $operator]);
+// Mise à jour des paramètres (clés API, etc.)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_settings'])) {
+    $payment_method = clean($_POST['payment_method']);
+    $settings = [];
+    if ($payment_method === 'paypal') {
+        $settings['client_id'] = clean($_POST['paypal_client_id']);
+        $settings['client_secret'] = clean($_POST['paypal_client_secret']);
+        $settings['mode'] = clean($_POST['paypal_mode']);
+    } elseif ($payment_method === 'credit_card') {
+        $settings['api_key'] = clean($_POST['cc_api_key']);
+        $settings['enabled'] = true;
     }
-    setFlashMessage('success', 'Comptes Mobile Money mis à jour');
+    $settings_json = json_encode($settings);
+    $stmt = $conn->prepare("UPDATE payment_methods SET settings = ? WHERE name = ?");
+    $stmt->execute([$settings_json, $payment_method]);
+    setFlashMessage('success', 'Paramètres mis à jour');
     header('Location: payment-methods.php');
     exit();
 }
@@ -33,21 +38,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_mobile'])) {
 // Récupérer les données
 $stmt = $conn->query("SELECT * FROM payment_methods ORDER BY sort_order");
 $payment_methods = $stmt->fetchAll();
-
-$stmt = $conn->query("SELECT * FROM mobile_money_accounts");
-$mobile_accounts = $stmt->fetchAll();
-
-// Transactions Mobile Money en attente
-$stmt = $conn->prepare("
-    SELECT mmt.*, o.order_number, u.username, u.email 
-    FROM mobile_money_transactions mmt
-    JOIN orders o ON mmt.order_id = o.id
-    JOIN users u ON mmt.user_id = u.id
-    WHERE mmt.status = 'pending'
-    ORDER BY mmt.created_at DESC
-");
-$stmt->execute();
-$pending_transactions = $stmt->fetchAll();
 ?>
 
 <!DOCTYPE html>
@@ -98,6 +88,12 @@ $pending_transactions = $stmt->fetchAll();
             background: #2a2a35;
             border-radius: 12px;
             padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .method-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -156,6 +152,8 @@ $pending_transactions = $stmt->fetchAll();
             text-decoration: none;
             font-size: 0.8rem;
             transition: all 0.2s;
+            border: none;
+            cursor: pointer;
         }
         
         .btn-toggle.active {
@@ -168,20 +166,17 @@ $pending_transactions = $stmt->fetchAll();
             color: white;
         }
         
-        table {
-            width: 100%;
-            border-collapse: collapse;
+        .btn-primary {
+            background: #c14432;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
         }
         
-        th, td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #2a2a35;
-        }
-        
-        th {
-            color: #a0a0b0;
-            font-weight: 500;
+        .btn-primary:hover {
+            background: #a63a2a;
         }
         
         .form-group {
@@ -204,38 +199,16 @@ $pending_transactions = $stmt->fetchAll();
             color: white;
         }
         
-        .btn-primary {
-            background: #c14432;
-            color: white;
-            padding: 10px 20px;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
+        .settings-form {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid #2a2a35;
         }
         
-        .btn-success {
-            background: #10b981;
-            color: white;
-            padding: 6px 12px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            text-decoration: none;
-            font-size: 0.8rem;
-            margin-right: 5px;
-        }
-        
-        .btn-danger {
-            background: #ef4444;
-            color: white;
-            padding: 6px 12px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-        }
-        
-        .pending-row {
-            background: rgba(245, 158, 11, 0.1);
+        .settings-form .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
         }
         
         .back-link {
@@ -247,6 +220,12 @@ $pending_transactions = $stmt->fetchAll();
         
         .back-link:hover {
             text-decoration: underline;
+        }
+        
+        @media (max-width: 768px) {
+            .settings-form .form-row {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
@@ -262,106 +241,72 @@ $pending_transactions = $stmt->fetchAll();
         <div class="methods-grid">
             <?php foreach($payment_methods as $method): ?>
             <div class="method-card">
-                <div class="method-info">
-                    <div class="method-icon">
-                        <i class="fab fa-<?php echo $method['logo']; ?>"></i>
+                <div class="method-header">
+                    <div class="method-info">
+                        <div class="method-icon">
+                            <i class="fas <?php echo $method['name'] == 'credit_card' ? 'fa-credit-card' : 'fa-paypal'; ?>"></i>
+                        </div>
+                        <div>
+                            <div class="method-name"><?php echo $method['display_name']; ?></div>
+                            <div class="method-desc"><?php echo $method['description']; ?></div>
+                        </div>
                     </div>
                     <div>
-                        <div class="method-name"><?php echo $method['display_name']; ?></div>
-                        <div class="method-desc"><?php echo $method['description']; ?></div>
+                        <span class="status-badge <?php echo $method['is_active'] ? 'status-active' : 'status-inactive'; ?>">
+                            <?php echo $method['is_active'] ? 'Actif' : 'Inactif'; ?>
+                        </span>
                     </div>
                 </div>
-                <div>
-                    <span class="status-badge <?php echo $method['is_active'] ? 'status-active' : 'status-inactive'; ?>">
-                        <?php echo $method['is_active'] ? 'Actif' : 'Inactif'; ?>
-                    </span>
-                    <a href="?toggle=1&id=<?php echo $method['id']; ?>" class="btn-toggle <?php echo $method['is_active'] ? 'inactive' : 'active'; ?>" style="margin-left: 10px;">
+                
+                <!-- Bouton toggle -->
+                <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                    <a href="?toggle=1&id=<?php echo $method['id']; ?>" class="btn-toggle <?php echo $method['is_active'] ? 'inactive' : 'active'; ?>">
                         <?php echo $method['is_active'] ? 'Désactiver' : 'Activer'; ?>
                     </a>
                 </div>
+                
+                <!-- Paramètres spécifiques (uniquement pour PayPal et CB) -->
+                <?php if(in_array($method['name'], ['paypal', 'credit_card'])): ?>
+                <div class="settings-form">
+                    <form method="POST">
+                        <input type="hidden" name="payment_method" value="<?php echo $method['name']; ?>">
+                        <?php if($method['name'] === 'paypal'): ?>
+                            <?php 
+                            $settings = json_decode($method['settings'], true) ?? [];
+                            ?>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Client ID</label>
+                                    <input type="text" name="paypal_client_id" value="<?php echo $settings['client_id'] ?? ''; ?>" placeholder="Client ID PayPal">
+                                </div>
+                                <div class="form-group">
+                                    <label>Client Secret</label>
+                                    <input type="text" name="paypal_client_secret" value="<?php echo $settings['client_secret'] ?? ''; ?>" placeholder="Client Secret PayPal">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Mode</label>
+                                <select name="paypal_mode">
+                                    <option value="sandbox" <?php echo ($settings['mode'] ?? '') == 'sandbox' ? 'selected' : ''; ?>>Sandbox (test)</option>
+                                    <option value="live" <?php echo ($settings['mode'] ?? '') == 'live' ? 'selected' : ''; ?>>Live (production)</option>
+                                </select>
+                            </div>
+                        <?php elseif($method['name'] === 'credit_card'): ?>
+                            <?php 
+                            $settings = json_decode($method['settings'], true) ?? [];
+                            ?>
+                            <div class="form-group">
+                                <label>Clé API (optionnel)</label>
+                                <input type="text" name="cc_api_key" value="<?php echo $settings['api_key'] ?? ''; ?>" placeholder="Clé API du processeur de paiement">
+                            </div>
+                        <?php endif; ?>
+                        <button type="submit" name="update_settings" class="btn-primary">Enregistrer les paramètres</button>
+                    </form>
+                </div>
+                <?php endif; ?>
             </div>
             <?php endforeach; ?>
         </div>
-    </div>
-    
-    <!-- Comptes Mobile Money -->
-    <div class="card">
-        <h2><i class="fas fa-mobile-alt"></i> Comptes Mobile Money</h2>
-        <form method="POST">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Opérateur</th>
-                        <th>Numéro de téléphone</th>
-                        <th>Nom du compte</th>
-                        <th>Actif</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach($mobile_accounts as $account): ?>
-                    <tr>
-                        <td>
-                            <strong><?php echo $account['operator_name']; ?></strong>
-                            <input type="hidden" name="accounts[<?php echo $account['operator']; ?>][operator]" value="<?php echo $account['operator']; ?>">
-                        </td>
-                        <td>
-                            <input type="text" name="accounts[<?php echo $account['operator']; ?>][phone]" value="<?php echo $account['phone_number']; ?>" style="width: 200px;">
-                        </td>
-                        <td>
-                            <input type="text" name="accounts[<?php echo $account['operator']; ?>][name]" value="<?php echo $account['account_name']; ?>" style="width: 200px;">
-                        </td>
-                        <td>
-                            <input type="checkbox" name="accounts[<?php echo $account['operator']; ?>][active]" value="1" <?php echo $account['is_active'] ? 'checked' : ''; ?>>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-            <button type="submit" name="update_mobile" class="btn-primary" style="margin-top: 20px;">Enregistrer les modifications</button>
-        </form>
-    </div>
-    
-    <!-- Transactions Mobile Money en attente -->
-    <div class="card">
-        <h2><i class="fas fa-clock"></i> Transactions Mobile Money en attente</h2>
-        
-        <?php if(count($pending_transactions) > 0): ?>
-        <table>
-            <thead>
-                <tr>
-                    <th>Date</th>
-                    <th>Commande</th>
-                    <th>Client</th>
-                    <th>Opérateur</th>
-                    <th>Montant</th>
-                    <th>ID Transaction</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php foreach($pending_transactions as $tx): ?>
-                <tr class="pending-row">
-                    <td><?php echo date('d/m/Y H:i', strtotime($tx['created_at'])); ?></td>
-                    <td><?php echo $tx['order_number']; ?></td>
-                    <td><?php echo $tx['username']; ?><br><small><?php echo $tx['email']; ?></small></td>
-                    <td><?php echo $tx['operator_name']; ?></td>
-                    <td><?php echo formatPrice($tx['amount']); ?></td>
-                    <td><code><?php echo $tx['transaction_id']; ?></code></td>
-                    <td>
-                        <a href="verify-mobile-payment.php?id=<?php echo $tx['id']; ?>&action=verify" class="btn-success" onclick="return confirm('Valider cette transaction ?')">
-                            <i class="fas fa-check"></i> Valider
-                        </a>
-                        <a href="verify-mobile-payment.php?id=<?php echo $tx['id']; ?>&action=reject" class="btn-danger" onclick="return confirm('Rejeter cette transaction ?')">
-                            <i class="fas fa-times"></i> Rejeter
-                        </a>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
-        <?php else: ?>
-        <p>Aucune transaction en attente.</p>
-        <?php endif; ?>
     </div>
 </div>
 </body>

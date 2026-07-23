@@ -1,5 +1,5 @@
 <?php
-// config/database.php - Version clean et optimisée
+// config/database.php - Version clean et optimisée (sans AMEA)
 
 // Configuration de la base de données
 define('DB_HOST', 'localhost');
@@ -7,11 +7,6 @@ define('DB_NAME', 'mars_shop');
 define('DB_USER', 'root');
 define('DB_PASS', '');
 define('DB_CHARSET', 'utf8mb4');
-
-// Configuration AMEA OAuth
-define('AMEA_CLIENT_ID', 'VOTRE_CLIENT_ID_AMEA');
-define('AMEA_CLIENT_SECRET', 'VOTRE_CLIENT_SECRET_AMEA');
-define('AMEA_REDIRECT_URI', 'https://votre-site.com/oauth_amea_callback.php');
 
 // Options PDO
 $pdo_options = [

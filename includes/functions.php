@@ -1,5 +1,5 @@
 <?php
-// includes/functions.php - Version clean et optimisée
+// includes/functions.php - Version clean et optimisée (sans AMEA)
 
 // ============================================
 // AUTHENTIFICATION
@@ -40,21 +40,6 @@ function requireAdmin(): void {
         exit();
     }
 }
-
-/**
- * Génère l'URL de connexion AMEA
- */
-function getAmeaLoginUrl(): string {
-    $params = [
-        'client_id' => AMEA_CLIENT_ID,
-        'redirect_uri' => AMEA_REDIRECT_URI,
-        'response_type' => 'code',
-        'scope' => 'profile email',
-        'state' => bin2hex(random_bytes(16))
-    ];
-    return 'https://chaudly.com/oauth_authorize.php?' . http_build_query($params);
-}
-
 
 // ============================================
 // FORMATAGE
@@ -107,7 +92,6 @@ function createSlug(string $string): string {
 function generateOrderNumber(): string {
     return 'MARS-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -6));
 }
-
 
 // ============================================
 // GESTION DU PANIER
@@ -308,7 +292,6 @@ function clearCart(): void {
     }
 }
 
-
 // ============================================
 // GESTION DE LA WISHLIST
 // ============================================
@@ -377,7 +360,6 @@ function isInWishlist(int $product_id): bool {
     return isset($_SESSION['guest_wishlist']) && in_array($product_id, $_SESSION['guest_wishlist']);
 }
 
-
 // ============================================
 // MESSAGES FLASH
 // ============================================
@@ -400,7 +382,6 @@ function getFlashMessage(): ?array {
     }
     return null;
 }
-
 
 // ============================================
 // EMAIL

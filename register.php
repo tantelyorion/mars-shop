@@ -1,5 +1,5 @@
 <?php
-// register.php - Inscription
+// register.php - Inscription (sans AMEA)
 require_once 'config/database.php';
 require_once 'includes/header.php';
 
@@ -11,17 +11,6 @@ if (isLoggedIn()) {
 $error = '';
 $success = '';
 
-// Récupérer les données AMEA si disponibles (après OAuth)
-$amea_data = null;
-if (isset($_GET['amea_id']) && isset($_GET['amea_email'])) {
-    $amea_data = [
-        'amea_id' => $_GET['amea_id'],
-        'email' => $_GET['amea_email'],
-        'username' => $_GET['amea_username'] ?? '',
-        'avatar' => $_GET['amea_avatar'] ?? ''
-    ];
-}
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = clean($_POST['username']);
     $email = clean($_POST['email']);
@@ -29,8 +18,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $confirm = $_POST['confirm_password'];
     $full_name = clean($_POST['full_name']);
     $phone = clean($_POST['phone']);
-    $amea_id = !empty($_POST['amea_id']) ? $_POST['amea_id'] : null;
-    $amea_avatar = !empty($_POST['amea_avatar']) ? $_POST['amea_avatar'] : null;
     
     if (empty($username) || empty($email) || empty($password)) {
         $error = 'Veuillez remplir tous les champs obligatoires';
@@ -51,13 +38,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $hashed = password_hash($password, PASSWORD_DEFAULT);
             $stmt = $conn->prepare("
-                INSERT INTO users (username, email, password, full_name, phone, amea_id, amea_avatar, auth_provider) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO users (username, email, password, full_name, phone) 
+                VALUES (?, ?, ?, ?, ?)
             ");
             
-            $auth_provider = $amea_id ? 'amea' : 'local';
-            
-            if ($stmt->execute([$username, $email, $hashed, $full_name, $phone, $amea_id, $amea_avatar, $auth_provider])) {
+            if ($stmt->execute([$username, $email, $hashed, $full_name, $phone])) {
                 setFlashMessage('success', 'Inscription réussie ! Vous pouvez vous connecter.');
                 header('Location: login.php');
                 exit();
@@ -78,22 +63,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="alert-error"><?php echo $error; ?></div>
             <?php endif; ?>
             
-            <?php if($amea_data): ?>
-            <div class="alert-info" style="background: rgba(245,158,11,0.15); border: 1px solid #f59e0b; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
-                <i class="fas fa-info-circle"></i> Vous vous inscrivez avec AMEA. Votre compte sera lié automatiquement.
-            </div>
-            <?php endif; ?>
-            
             <form method="POST">
-                <?php if($amea_data): ?>
-                <input type="hidden" name="amea_id" value="<?php echo clean($amea_data['amea_id']); ?>">
-                <input type="hidden" name="amea_avatar" value="<?php echo clean($amea_data['avatar']); ?>">
-                <?php endif; ?>
-                
                 <div class="form-row">
                     <div class="form-group">
                         <label>Nom d'utilisateur *</label>
-                        <input type="text" name="username" value="<?php echo clean($amea_data['username'] ?? ''); ?>" required>
+                        <input type="text" name="username" required>
                     </div>
                     <div class="form-group">
                         <label>Nom complet</label>
@@ -103,7 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 
                 <div class="form-group">
                     <label>Email *</label>
-                    <input type="email" name="email" value="<?php echo clean($amea_data['email'] ?? ''); ?>" required>
+                    <input type="email" name="email" required>
                 </div>
                 
                 <div class="form-group">
